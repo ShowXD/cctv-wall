@@ -1,0 +1,93 @@
+name: Release EXE
+
+# 打 tag 就出貨：git tag v0.2.0 && git push origin v0.2.0
+# 也可以在 Actions 頁面手動觸發，只產出 artifact、不建立 Release。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build one-file EXE
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # tag 必須與 pyproject.toml 的 version 一致，否則出貨的 exe 會標錯版本。
+      - name: Check tag matches project version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($tag -ne $version) {
+            Write-Error "tag $tag 與 pyproject.toml 的 version $version 不一致。請先更新版本號再打 tag。"
+            exit 1
+          }
+          Write-Host "version $version OK"
+
+      # 打包機必須裝 VLC，否則做出來的 exe 需要現場電腦自行安裝 VLC。
+      - name: Install VLC (bundled into the EXE)
+        run: choco install vlc -y --no-progress
+
+      - name: Sync build environment
+        run: uv sync
+
+      - name: Build
+        run: |
+          $out = uv run build cctv-wall 2>&1 | Tee-Object -Variable captured
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (($captured -join "`n") -match 'VLC bundling: DISABLED') {
+            Write-Error '打包機找不到 VLC，做出來的 exe 不含 VLC。中止。'
+            exit 1
+          }
+
+      - name: Collect the executable
+        id: collect
+        run: |
+          $exe = Get-ChildItem -Path dist/releases -Recurse -Filter CCTVWall.exe |
+                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $exe) { Write-Error 'dist/releases 底下找不到 CCTVWall.exe'; exit 1 }
+          $name = "CCTVWall-${{ github.ref_name }}.exe"
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item $exe.FullName "artifact/$name"
+          Write-Host ("{0}  {1} MiB" -f $name, [math]::Round($exe.Length / 1MB, 1))
+          "asset=artifact/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # 打包後的自我診斷：strict sync 要 available，否則 GStreamer 元件沒進去。
+      - name: Smoke test the EXE
+        run: |
+          $report = & "${{ steps.collect.outputs.asset }}" --check 2>&1 | Tee-Object -Variable shown
+          if (($shown -join "`n") -notmatch 'strict sync\s*:\s*available') {
+            Write-Error 'exe 回報 strict sync 不可用，GStreamer 元件可能沒打包進去。'
+            exit 1
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CCTVWall-${{ github.ref_name }}
+          path: ${{ steps.collect.outputs.asset }}
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.collect.outputs.asset }}
+          generate_release_notes: true
+          body: |
+            單一 EXE，內含 VLC 與 GStreamer 嚴格時間戳同步元件，現場電腦不必安裝任何東西。
+
+            **部署**：把 `CCTVWall.exe` 放到目標資料夾 → 先跑 `CCTVWall.exe --check` →
+            把 `workspace.json` 放在 exe 旁邊（可從 `workspace.example.json` 複製修改）。
+
+            詳見 [部署說明](https://github.com/${{ github.repository }}/blob/main/docs/BUILD.md)。

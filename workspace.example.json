@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "last_site": "Taipei Office",
+  "performance": "low_end",
+  "geometry": "1280x800+78+78",
+  "language": "zh_TW",
+  "strict_sync": false,
+  "sites": [
+    {
+      "name": "Taipei Office",
+      "cameras": [
+        {
+          "name": "Front Gate",
+          "host": "10.0.0.5",
+          "port": 554,
+          "user": "REPLACE_WITH_USERNAME",
+          "password": "REPLACE_WITH_PASSWORD",
+          "vendor": "hikvision",
+          "stream": 2,
+          "quality": "auto"
+        },
+        {
+          "name": "Lobby",
+          "host": "10.0.0.6",
+          "port": 554,
+          "user": "REPLACE_WITH_USERNAME",
+          "password": "REPLACE_WITH_PASSWORD",
+          "vendor": "dahua",
+          "stream": 2
+        },
+        {
+          "name": "Custom Path Camera",
+          "host": "10.0.0.7",
+          "vendor": "custom",
+          "path_template": "live/ch{stream}",
+          "stream": 1
+        },
+        {
+          "name": "Local Clip",
+          "url": "C:/videos/clip.mp4"
+        },
+        {
+          "name": "YouTube Live",
+          "url": "https://www.youtube.com/watch?v=xxxxxxxxxxx",
+          "quality": "720p"
+        }
+      ]
+    },
+    {
+      "name": "Warehouse",
+      "cameras": [
+        {
+          "name": "Dock",
+          "url": "rtsp://10.1.0.10:554/stream1",
+          "quality": "360p"
+        }
+      ]
+    }
+  ]
+}

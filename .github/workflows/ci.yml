@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # 測試不需要 VLC、不連網，所以跳過沉重的 build group（PyInstaller + GStreamer）。
+      - name: Sync dev environment
+        run: uv sync --no-default-groups --group dev
+
+      - name: Run pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --no-default-groups --group dev pytest -q
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 這個專案最真實的外洩風險：workspace.json 含明碼 RTSP 密碼。
+      - name: Reject a tracked workspace.json
+        run: |
+          if git ls-files --error-unmatch workspace.json > /dev/null 2>&1; then
+            echo "::error file=workspace.json::workspace.json 含明碼密碼，不可納入版控。請執行 git rm --cached workspace.json 並更換所有已暴露的密碼。"
+            exit 1
+          fi
+          echo "OK: workspace.json 未被追蹤"
+
+      # 用官方 container 而非 gitleaks-action：後者對 private repo 需要付費授權。
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/repo" zricethezav/gitleaks:latest \
+            detect --source /repo --no-banner --redact --verbose
