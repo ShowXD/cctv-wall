@@ -63,13 +63,33 @@ jobs:
           Write-Host ("{0}  {1} MiB" -f $name, [math]::Round($exe.Length / 1MB, 1))
           "asset=artifact/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      # 打包後的自我診斷：strict sync 要 available，否則 GStreamer 元件沒進去。
+      # 打包後的自我診斷。用 Start-Process 導向檔案而非直接呼叫：
+      # exe 是 console=False，__main__._check() 在 sys.stdout is None 時會彈對話框，
+      # 在 headless runner 上會一路卡到 job timeout。導向檔案可確保 stdout 有效控制代碼，
+      # WaitForExit 的上限則是萬一還是彈窗時的保險。
       - name: Smoke test the EXE
         run: |
-          $report = & "${{ steps.collect.outputs.asset }}" --check 2>&1 | Tee-Object -Variable shown
-          if (($shown -join "`n") -notmatch 'strict sync\s*:\s*available') {
-            Write-Error 'exe 回報 strict sync 不可用，GStreamer 元件可能沒打包進去。'
+          $p = Start-Process -FilePath "${{ steps.collect.outputs.asset }}" `
+                             -ArgumentList '--check' -NoNewWindow -PassThru `
+                             -RedirectStandardOutput check.txt -RedirectStandardError check.err
+          if (-not $p.WaitForExit(180000)) {
+            $p.Kill()
+            Write-Error 'CCTVWall.exe --check 逾時 3 分鐘（多半是彈出了對話框）。'
             exit 1
+          }
+          $report = (Get-Content check.txt -Raw) + (Get-Content check.err -Raw)
+          Write-Host $report
+
+          # 硬性條件：VLC 是打包進去的，與 runner 環境無關，沒有就是打包壞了。
+          if ($report -notmatch 'libvlc\s*:\s*\d') {
+            Write-Error 'exe 沒有回報 libvlc 版本，內含的 VLC 沒打包成功。'
+            exit 1
+          }
+
+          # 非硬性：strict sync 需要 d3d11 元件註冊成功，runner 是無 GPU 的 VM，
+          # 這裡失敗不一定代表 exe 壞掉。標成警告，由實機驗收把關。
+          if ($report -notmatch 'strict sync\s*:\s*available') {
+            Write-Warning 'runner 上 strict sync 不可用。請務必在實際的 Windows 10 目標機上跑一次 --check 確認。'
           }
 
       - uses: actions/upload-artifact@v4
