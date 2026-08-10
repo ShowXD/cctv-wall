@@ -1,0 +1,39 @@
+# --- 機密：實際設定檔含明碼帳號密碼，絕對不進版控 ---
+workspace.json
+!workspace.example.json
+*.workspace.json
+.env
+.env.*
+!.env.example
+
+# --- 執行期產物 ---
+cctv-wall.log
+cctv-wall.log.*
+*.log
+
+# --- 打包產物與快取 ---
+build/
+dist/
+*.spec.bak
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# --- 虛擬環境 ---
+.venv/
+venv/
+
+# --- 編輯器與作業系統 ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp

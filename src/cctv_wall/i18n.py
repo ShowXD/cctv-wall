@@ -1,0 +1,108 @@
+"""Small, dependency-free UI translation catalog used by the Qt presentation layer."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from cctv_wall.models import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+
+LANGUAGE_LABELS = {"zh_TW": "繁體中文", "en": "English"}
+
+_MESSAGES: dict[str, dict[str, str]] = {
+    "en": {
+        "app_title": "CCTV Wall", "product_subtitle": "LIVE MONITORING", "sites": "SITES",
+        "manage": "Manage setup", "monitoring": "MONITORING / ACTIVE SITE",
+        "no_site": "No site selected", "cameras": "{count} cameras configured", "camera": "{count} camera configured",
+        "live": "●  {live}/{total} LIVE", "page": "Page {current} of {total}",
+        "previous": "Previous page", "next": "Next page", "view_profile": "VIEW PROFILE", "mute": "Mute audio", "muted": "Audio muted",
+        "reload_tip": "Reconnect visible cameras", "focus_hint": "Double-click a camera to focus it; double-click again to return",
+        "no_cameras": "No cameras here yet", "add_camera_hint": "Open Settings to add a camera to this site.",
+        "settings_title": "Settings — sites, cameras and quality", "settings_heading": "Site & camera settings",
+        "settings_help": "Select a site or camera, make changes, then save them to the monitoring wall.",
+        "add_site": "Add site", "add_camera": "Add camera", "delete": "Delete selected", "connection": "Connection",
+        "stream_selection": "Stream selection", "url_preview": "PLAYABLE URL PREVIEW",
+        "save": "Save & reload wall", "save_add_another": "Add & next camera", "cancel": "Cancel", "browse": "Browse…", "name": "Camera display name", "host": "IP / hostname",
+        "port": "Port", "username": "Username", "password": "Password", "custom_path": "Custom path  {{stream}} {{stream0}} {{main_sub}}",
+        "direct_url": "Video source URL or file path", "vendor": "Vendor (RTSP path)", "stream": "Stream", "quality": "Quality",
+        "basic_settings": "Basic camera settings", "advanced_connection_show": "Show advanced connection settings ▸", "advanced_connection_hide": "Hide advanced connection settings ▾",
+        "select_site": "Select a site first.", "delete_site": "Delete site", "delete_site_confirm": "Delete site {name!r} and its cameras?",
+        "apply_title": "Apply", "invalid_camera": "Invalid camera", "cannot_save": "Cannot save",
+        "fill_camera": "Fill in the fields, then save to reload the wall.", "video_file": "Pick a video file",
+        "profile_title": "Performance profile", "restart_profile": "{profile}\n\nRestart the app to apply this profile.",
+        "profile_low_end": "Low load · 4 views", "profile_balanced": "Balanced · 9 views",
+        "profile_full": "High quality + audio · 16",
+        "save_error": "Could not save settings", "connection_waiting": "Connecting — check the IP, port and network",
+        "no_video": "No video received — check stream path or credentials", "vlc_error": "VLC could not play this stream", "not_playing": "Not playing",
+        "language": "Language", "stream_help": "Stream 1 is the main stream; 2/3 are normally lower-bandwidth substreams. Quality limits adaptive HLS and YouTube sources, not RTSP camera resolution.",
+        "maximize": "Fill app with video", "restore_window": "Restore normal interface", "stream_choice": "Stream {stream}",
+        "logs": "Live log", "diagnostics": "Diagnostics", "close": "Close", "no_events": "No events in this session.",
+        "sync_diagnostics": "Timestamp sync", "run_sync_probe": "Check current site", "sync_probe_running_button": "Checking…",
+        "sync_probe_help": "Read-only check: briefly connects to each RTSP source and looks for RTCP Sender Reports. URLs and credentials are never displayed or stored in this window.",
+        "sync_probe_running": "Checking {camera}…", "sync_probe_result_heading": "RTSP timestamp synchronisation capability",
+        "sync_ready": "Ready for strict timestamp synchronisation", "sync_unavailable": "No usable RTCP Sender Report — strict synchronisation is unavailable",
+        "sync_probe_error": "Could not check: {error}", "sender_reports": "{count} Sender Report(s)",
+        "sync_probe_summary": "Eligible sources: {ready}/{total}. All sources must be eligible and NTP-synchronised before strict sync can be enabled.",
+        "enable_strict_sync": "Enable strict sync", "disable_strict_sync": "Use normal playback", "sync_short": "Sync",
+        "usage": "Players {players}  •  CPU {cpu}  •  RAM {memory}", "usage_unknown": "—",
+        "duplicate_selected": "Duplicate selected", "next_ip": "IP +1", "select_item": "Select a site or camera first.",
+        "invalid_ip": "The host must be a valid IP address to increment it.", "copy_suffix": "copy",
+        "rename": "Rename", "delete_site_action": "Delete site", "add_camera_action": "Add camera",
+        "duplicate_site": "Duplicate site", "watch_site": "View this site", "rename_site": "Rename site",
+        "site_exists": "A site named {name!r} already exists.", "new_site_name": "Site name",
+        "untitled_site": "New site",
+        "move_up": "Move up", "move_down": "Move down",
+    },
+    "zh_TW": {
+        "app_title": "CCTV 影像牆", "product_subtitle": "即時監看中心", "sites": "監看地點", "manage": "管理設定",
+        "monitoring": "即時監看／目前地點", "no_site": "尚未選擇地點", "cameras": "已設定 {count} 支攝影機", "camera": "已設定 {count} 支攝影機",
+        "live": "●  {live}/{total} 路播放中", "page": "第 {current} / {total} 頁", "previous": "上一頁", "next": "下一頁",
+        "view_profile": "效能模式", "mute": "靜音", "muted": "已靜音", "reload_tip": "重新連線目前可見的攝影機",
+        "focus_hint": "雙擊影像可專注觀看；再次雙擊即可回到原本畫面",
+        "no_cameras": "這個地點尚未設定攝影機", "add_camera_hint": "請開啟設定，新增一支攝影機。",
+        "settings_title": "設定 — 地點、攝影機與畫質", "settings_heading": "地點與攝影機設定",
+        "settings_help": "選擇地點或攝影機後修改欄位，儲存後會立即重新載入影像牆。",
+        "add_site": "新增地點", "add_camera": "新增攝影機", "delete": "刪除所選項目", "connection": "連線資訊",
+        "stream_selection": "串流選擇", "url_preview": "可播放網址預覽", "save": "儲存並重新載入", "save_add_another": "加入並新增下一支",
+        "cancel": "取消", "browse": "瀏覽…", "name": "攝影機顯示名稱", "host": "IP／主機名稱", "port": "連接埠", "username": "帳號",
+        "password": "密碼", "custom_path": "自訂路徑  {{stream}} {{stream0}} {{main_sub}}", "direct_url": "影像來源網址或檔案路徑",
+        "basic_settings": "基本設定", "advanced_connection_show": "顯示進階連線設定 ▸", "advanced_connection_hide": "隱藏進階連線設定 ▾",
+        "vendor": "攝影機品牌（RTSP 路徑）", "stream": "串流", "quality": "畫質",
+        "select_site": "請先選擇一個地點。", "delete_site": "刪除地點",
+        "delete_site_confirm": "確定要刪除地點 {name!r} 及其攝影機嗎？", "apply_title": "套用", "invalid_camera": "攝影機設定無效",
+        "cannot_save": "無法儲存", "fill_camera": "填寫欄位後，按「儲存並重新載入」。", "video_file": "選擇影片檔案",
+        "profile_title": "效能模式", "restart_profile": "{profile}\n\n重新啟動程式後才會套用此模式。", "save_error": "無法儲存設定",
+        "profile_low_end": "低負載 · 4 格", "profile_balanced": "均衡監看 · 9 格",
+        "profile_full": "高畫質＋音訊 · 16 格",
+        "connection_waiting": "正在連線 — 請檢查 IP、連接埠與網路",
+        "no_video": "未收到影像 — 請檢查串流路徑或帳密", "vlc_error": "VLC 無法播放這個串流", "not_playing": "未播放",
+        "language": "語言", "stream_help": "串流 1 通常是主碼流；2／3 通常是較省頻寬的子碼流。畫質只限制 HLS 與 YouTube 等自適應來源，不會改變 RTSP 攝影機解析度。",
+        "maximize": "以影像填滿程式畫面", "restore_window": "還原一般介面", "stream_choice": "串流 {stream}",
+        "logs": "即時紀錄", "diagnostics": "診斷資訊", "close": "關閉", "no_events": "本次執行尚無事件紀錄。",
+        "sync_diagnostics": "時間戳同步", "run_sync_probe": "檢查目前地點", "sync_probe_running_button": "檢查中…",
+        "sync_probe_help": "唯讀檢查：會短暫連線每支 RTSP 攝影機，確認是否收到 RTCP Sender Report。此視窗不會顯示或儲存網址與帳密。",
+        "sync_probe_running": "正在檢查 {camera}…", "sync_probe_result_heading": "RTSP 時間戳同步能力",
+        "sync_ready": "可納入嚴格時間戳同步", "sync_unavailable": "未收到可用的 RTCP Sender Report，無法嚴格同步",
+        "sync_probe_error": "無法檢查：{error}", "sender_reports": "{count} 筆 Sender Report",
+        "sync_probe_summary": "可用來源：{ready}/{total}。要啟用嚴格同步，所有來源都必須可用且已完成 NTP 校時。",
+        "enable_strict_sync": "啟用嚴格時間戳同步", "disable_strict_sync": "改用一般播放", "sync_short": "同步",
+        "usage": "播放器 {players}  •  CPU {cpu}  •  記憶體 {memory}", "usage_unknown": "—",
+        "duplicate_selected": "複製所選項目", "next_ip": "IP +1", "select_item": "請先選擇地點或攝影機。",
+        "invalid_ip": "主機欄位必須是有效的 IP 位址，才能自動遞增。", "copy_suffix": "副本",
+        "rename": "重新命名", "delete_site_action": "刪除地點", "add_camera_action": "新增攝影機",
+        "duplicate_site": "複製地點", "watch_site": "觀看此地點", "rename_site": "重新命名地點",
+        "site_exists": "地點名稱 {name!r} 已存在。", "new_site_name": "地點名稱",
+        "untitled_site": "新地點",
+        "move_up": "上移", "move_down": "下移",
+    },
+}
+
+
+@dataclass(frozen=True, slots=True)
+class Translator:
+    language: str = DEFAULT_LANGUAGE
+
+    def __post_init__(self) -> None:
+        if self.language not in SUPPORTED_LANGUAGES:
+            object.__setattr__(self, "language", DEFAULT_LANGUAGE)
+
+    def t(self, key: str, **values: object) -> str:
+        return _MESSAGES[self.language].get(key, key).format(**values)
