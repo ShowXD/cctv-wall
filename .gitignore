@@ -37,3 +37,6 @@ venv/
 Thumbs.db
 desktop.ini
 *.swp
+
+# --- 掃描報告 ---
+semgrep*.json
