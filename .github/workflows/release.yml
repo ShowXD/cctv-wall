@@ -16,18 +16,22 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           enable-cache: true
 
       # tag 必須與 pyproject.toml 的 version 一致，否則出貨的 exe 會標錯版本。
       - name: Check tag matches project version
         if: startsWith(github.ref, 'refs/tags/')
+        # tag 名稱走 env 而非 ${{ }}：後者會在 PowerShell 剖析前就被貼進原始碼，
+        # 含 PowerShell 語法的 tag 名稱會被當成指令執行。
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $tag = "$env:TAG" -replace '^v', ''
           $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           if ($tag -ne $version) {
             Write-Error "tag $tag 與 pyproject.toml 的 version $version 不一致。請先更新版本號再打 tag。"
@@ -53,11 +57,13 @@ jobs:
 
       - name: Collect the executable
         id: collect
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           $exe = Get-ChildItem -Path dist/releases -Recurse -Filter CCTVWall.exe |
                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $exe) { Write-Error 'dist/releases 底下找不到 CCTVWall.exe'; exit 1 }
-          $name = "CCTVWall-${{ github.ref_name }}.exe"
+          $name = "CCTVWall-$env:TAG.exe"
           New-Item -ItemType Directory -Force artifact | Out-Null
           Copy-Item $exe.FullName "artifact/$name"
           Write-Host ("{0}  {1} MiB" -f $name, [math]::Round($exe.Length / 1MB, 1))
@@ -68,8 +74,10 @@ jobs:
       # 在 headless runner 上會一路卡到 job timeout。導向檔案可確保 stdout 有效控制代碼，
       # WaitForExit 的上限則是萬一還是彈窗時的保險。
       - name: Smoke test the EXE
+        env:
+          ASSET: ${{ steps.collect.outputs.asset }}
         run: |
-          $p = Start-Process -FilePath "${{ steps.collect.outputs.asset }}" `
+          $p = Start-Process -FilePath "$env:ASSET" `
                              -ArgumentList '--check' -NoNewWindow -PassThru `
                              -RedirectStandardOutput check.txt -RedirectStandardError check.err
           if (-not $p.WaitForExit(180000)) {
@@ -92,7 +100,7 @@ jobs:
             Write-Warning 'runner 上 strict sync 不可用。請務必在實際的 Windows 10 目標機上跑一次 --check 確認。'
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: CCTVWall-${{ github.ref_name }}
           path: ${{ steps.collect.outputs.asset }}
@@ -100,7 +108,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: ${{ steps.collect.outputs.asset }}
           generate_release_notes: true

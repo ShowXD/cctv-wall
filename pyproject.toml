@@ -27,6 +27,10 @@ dev = ["pytest>=8.0"]
 build = ["pyinstaller>=6.6", "pillow>=10.0", "gstreamer-bundle>=1.28,<1.29"]
 
 [tool.uv]
+# 不解析近 7 天內才發布的版本。被入侵的套件通常在被抓到並下架前只存活數小時到數天，
+# 這道緩衝讓打包出去的 exe 不會拿到剛上架的惡意版本。需要 uv >= 0.9.17。
+# 必須排在 default-groups 之前：Semgrep 的偵測規則只掃到本表格第一個左方括號為止。
+exclude-newer = "7 days"
 # `uv sync` and `uv run` include the full release toolchain without extra flags.
 default-groups = ["build"]
 
