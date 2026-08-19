@@ -15,6 +15,7 @@ jobs:
 
     with:
       python-version: "3.13"
+      qt: true
 
     secrets:
       SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
