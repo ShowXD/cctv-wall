@@ -142,3 +142,5 @@ CI 每次 push 都會檢查它有沒有被誤加進版控。詳見 [SECURITY.md]
 ## 授權
 
 [MIT](LICENSE) © 薛佾展
+
+<!-- CI test -->
