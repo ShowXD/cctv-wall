@@ -73,12 +73,14 @@ class VideoTile(QFrame):
 
     def __init__(self, camera: Camera, translator: Translator,
                  on_solo: Callable[[Camera], None] | None,
-                 on_stream_change: Callable[[Camera, int], None] | None) -> None:
+                 on_stream_change: Callable[[Camera, int], None] | None,
+                 on_retry: Callable[[Camera], None] | None = None) -> None:
         super().__init__()
         self.camera = camera
         self._translator = translator
         self._on_solo = on_solo
         self._on_stream_change = on_stream_change
+        self._on_retry = on_retry
         self.setObjectName("videoTile")
         self.setMinimumSize(180, 120)
         self.surface = VideoSurface(self._open_solo, self._show_stream_menu)
@@ -90,6 +92,7 @@ class VideoTile(QFrame):
         self._notice.setObjectName("tileNotice")
         self._notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._notice.setWordWrap(True)
+        self._notice.setCursor(Qt.CursorShape.PointingHandCursor)
         self._notice.hide()
         card.addWidget(self._notice)
         self._set_tooltip()
@@ -120,6 +123,14 @@ class VideoTile(QFrame):
     def _refresh_style(widget: QWidget) -> None:
         widget.style().unpolish(widget)
         widget.style().polish(widget)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if (self._on_retry is not None and self._notice.isVisible()
+                and self._notice.geometry().contains(event.position().toPoint())):
+            self._on_retry(self.camera)
+            event.accept()
+            return
+        super().mousePressEvent(event)
 
     def _open_solo(self) -> None:
         if self._on_solo is not None:
@@ -225,12 +236,13 @@ class WallView(QWidget):
     def tiles_per_page(self) -> int:
         return self._profile.tiles_per_page
 
-    def set_factory(self, factory: PlayerFactory) -> None:
-        """Swap backend only while stopped; used when strict sync is enabled or disabled."""
+    def set_profile(self, profile: PerformanceProfile, factory: PlayerFactory) -> None:
+        """Swap tuning and backend together, only while stopped."""
         if self._tiles:
             raise RuntimeError("cannot replace playback backend while tiles are active")
+        self._profile = profile
         self._factory = factory
-        self._start_interval_ms = _connection_start_interval(factory, self._profile)
+        self._start_interval_ms = _connection_start_interval(factory, profile)
 
     def page_count(self, camera_count: int) -> int:
         return layout.page_count(camera_count, self.tiles_per_page)
@@ -259,7 +271,7 @@ class WallView(QWidget):
             # fallback label in the navigation tree, but must never escape into logs.
             log_label = camera.name or f"Camera {index + 1}"
             tile = _Tile(VideoTile(camera, self._translator, self._on_solo,
-                                   self._on_stream_change), log_label)
+                                   self._on_stream_change, self._retry_camera), log_label)
             self._tiles.append(tile)
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.surface.winId()
@@ -328,13 +340,34 @@ class WallView(QWidget):
         tile.player = None
         tile.last_logged_state = None
 
-    def _advance_reconnect(self, tile: _Tile) -> None:
+    def _advance_reconnect(self, tile: _Tile) -> bool:
         """依退避節奏重連掉線的攝影機，讓長期監看不需要人工按重新連線。"""
         if not _due_for_retry(tile):
-            return
+            return False
         logger().info("camera=%s reconnecting", tile.log_label)
         self._release(tile)
         self._start(tile)
+        return True
+
+    def _retry_camera(self, camera: Camera) -> None:
+        """Operator asked for this one tile now; the backoff schedule starts over."""
+        tile = next((t for t in self._tiles if t.view.camera == camera), None)
+        if tile is None or tile in self._pending_starts:
+            return
+        tile.reset_backoff()
+        logger().info("camera=%s manual reconnect", tile.log_label)
+        self._release(tile)
+        self._start(tile)
+
+    def _outage_message(self, tile: _Tile, explanation_key: str, retried: bool) -> str:
+        lines = [tile.log_label, self._translator.t(explanation_key)]
+        if retried:
+            lines.append(self._translator.t("reconnecting"))
+        else:
+            seconds = tile.ticks_until_retry * AUDIT_INTERVAL_MS // 1000
+            lines.append(f"{self._translator.t('retry_in', seconds=seconds)}"
+                         f"  ·  {self._translator.t('retry_now')}")
+        return "\n".join(lines)
 
     def _start_next(self) -> None:
         """Start at most one connection per interval; stop() cancels the remaining queue."""
@@ -362,9 +395,11 @@ class WallView(QWidget):
                 tile.view.set_playing()
                 continue
             explanation = STATE_EXPLANATION_KEYS.get(state, "not_playing")
-            tile.view.show_notice(self._translator.t(explanation), "warning")
-            if state in DEAD_STATES:
-                self._advance_reconnect(tile)
+            if state not in DEAD_STATES:
+                tile.view.show_notice(self._translator.t(explanation), "warning")
+                continue
+            retried = self._advance_reconnect(tile)
+            tile.view.show_notice(self._outage_message(tile, explanation, retried), "error")
         if self._on_health_change is not None:
             self._on_health_change()
         if self._tiles:
@@ -412,7 +447,7 @@ class WallView(QWidget):
                     logger().warning("camera=%s failed-player release: %s", tile.log_label, release_error)
             reason = redact(str(error))
             logger().warning("camera=%s: %s", tile.log_label, reason)
-            tile.view.show_notice(reason, "error")
+            tile.view.show_notice(f"{tile.log_label}\n{reason}", "error")
 
     @staticmethod
     def _log_state_change(tile: _Tile, state: PlaybackState) -> None:

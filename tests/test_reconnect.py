@@ -5,8 +5,11 @@
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from cctv_wall.i18n import Translator
 from cctv_wall.player import PlaybackState
-from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, _Tile,
+from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _Tile,
                                _due_for_retry)
 
 
@@ -52,3 +55,19 @@ class TestDeadStates:
 
     def test_every_other_state_triggers_a_reconnect(self):
         assert DEAD_STATES == {PlaybackState.ERROR, PlaybackState.ENDED, PlaybackState.IDLE}
+
+
+class TestOutageNotice:
+    def _message(self, tile: _Tile, retried: bool) -> str:
+        stub = SimpleNamespace(_translator=Translator("en"))
+        return WallView._outage_message(stub, tile, "no_video", retried)
+
+    def test_a_waiting_tile_names_itself_and_its_countdown(self):
+        tile = _tile()
+        tile.ticks_until_retry = 4
+        message = self._message(tile, retried=False)
+        assert message.startswith("camera-1\n")
+        assert "20s" in message
+
+    def test_a_tile_being_retried_says_so_instead(self):
+        assert "Reconnecting" in self._message(_tile(), retried=True)

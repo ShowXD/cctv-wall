@@ -493,10 +493,24 @@ class MainWindow(QMainWindow):
         chosen = PROFILES.get(str(key))
         if chosen is None or chosen.key == self._profile.key:
             return
+        try:
+            new_factory = self._factory_builder(chosen, self._workspace.strict_sync)
+        except PlaybackError as error:
+            logger().warning("performance profile refused: %s", error)
+            QMessageBox.warning(self, self._profile_label(chosen), str(error))
+            self._profile_box.setCurrentIndex(self._profile_box.findData(self._profile.key))
+            return
+        self._exit_camera_focus_if_needed()
+        self._wall.stop()
+        old_factory, self._factory = self._factory, new_factory
+        self._profile = chosen
+        self._wall.set_profile(chosen, new_factory)
+        old_factory.shutdown()
         self._workspace = self._workspace.with_performance(chosen.key)
         self._persist()
-        QMessageBox.information(self, self._translator.t("profile_title"),
-                                self._translator.t("restart_profile", profile=self._profile_label(chosen)))
+        logger().info("performance profile=%s", chosen.key)
+        self._page = 0
+        self._show_current_page()
 
     def _on_language_selected(self, index: int) -> None:
         language = self._language_box.itemData(index)
@@ -561,7 +575,7 @@ class MainWindow(QMainWindow):
             return False
         self._wall.stop()
         old_factory, self._factory = self._factory, new_factory
-        self._wall.set_factory(new_factory)
+        self._wall.set_profile(self._profile, new_factory)
         old_factory.shutdown()
         self._workspace = self._workspace.with_strict_sync(enabled)
         self._sync_button.setChecked(enabled)
