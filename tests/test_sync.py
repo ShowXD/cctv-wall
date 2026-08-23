@@ -9,7 +9,7 @@ import os
 import re
 from pathlib import Path
 
-from cctv_wall import gst_sync
+from cctv_wall import gst_sync, sync_probe
 
 SOURCE = Path(gst_sync.__file__).read_text(encoding="utf-8")
 
@@ -81,4 +81,25 @@ class TestDiagnosticRedaction:
     def test_gstreamer_debug_url_does_not_persist_credentials(self):
         detail = gst_sync._safe_debug_detail("source=rtsp://operator:secret@example.test/live")
         assert "secret" not in detail
-        assert detail.endswith("rtsp://***@example.test/live")
+        assert detail.endswith("rtsp://****@example.test/live")
+
+
+class TestAuthenticationChallenge:
+    def test_digest_wins_when_a_camera_also_offers_basic(self):
+        header = 'Basic realm="cam"\nDigest realm="cam", nonce="abc"'
+        assert sync_probe._preferred_challenge(header).startswith("Digest ")
+
+    def test_a_single_offer_is_used_as_is(self):
+        assert sync_probe._preferred_challenge('Basic realm="cam"') == 'Basic realm="cam"'
+
+    def test_no_challenge_yields_no_header(self):
+        assert sync_probe._preferred_challenge("") == ""
+
+    def test_repeated_headers_are_both_kept(self):
+        connection = sync_probe._RtspConnection("rtsp://cam.lan/live")
+        connection._buffer = bytearray(
+            b'RTSP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm="cam"\r\n'
+            b'WWW-Authenticate: Digest realm="cam", nonce="abc"\r\n\r\n')
+        _status, headers, _body = connection._response()
+        assert sync_probe._preferred_challenge(
+            headers["www-authenticate"]).startswith("Digest ")

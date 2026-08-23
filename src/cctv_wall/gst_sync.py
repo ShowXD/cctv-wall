@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import importlib
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any, Sequence
 
 from cctv_wall.event_log import logger
 from cctv_wall.player import PlaybackError, PlaybackState
+from cctv_wall.urls import redact
 
 # A strict wall intentionally trades latency for the common presentation timestamp.
 # Every element play() builds, kept here so --check can prove a deployed exe will link
@@ -215,6 +215,4 @@ class GStreamerSyncPlayerFactory:
 
 def _safe_debug_detail(detail: str | None) -> str:
     """Keep useful GStreamer diagnostics without persisting RTSP credentials."""
-    if not detail:
-        return ""
-    return re.sub(r"(?i)rtsps?://[^@/\s]*@", "rtsp://***@", str(detail)).strip()
+    return redact(str(detail)).strip() if detail else ""

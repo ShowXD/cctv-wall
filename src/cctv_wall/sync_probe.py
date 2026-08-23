@@ -105,8 +105,7 @@ class _RtspConnection:
             if status >= 300:
                 raise SyncProbeError(f"RTSP OPTIONS failed ({status})")
             return
-        challenge = headers.get("www-authenticate", "")
-        self._auth_challenge = challenge
+        self._auth_challenge = _preferred_challenge(headers.get("www-authenticate", ""))
         status, _headers, _body = self.request("OPTIONS", self.url)
         if status >= 300:
             raise SyncProbeError(f"RTSP authentication failed ({status})")
@@ -153,7 +152,9 @@ class _RtspConnection:
         for line in lines[1:]:
             if ":" in line:
                 key, value = line.split(":", 1)
-                headers[key.lower()] = value.strip()
+                key, value = key.lower(), value.strip()
+                # A server may repeat WWW-Authenticate once per scheme it accepts.
+                headers[key] = f"{headers[key]}\n{value}" if key in headers else value
         length = int(headers.get("content-length", "0"))
         return status, headers, self._read_exact(length).decode("utf-8", errors="replace")
 
@@ -282,6 +283,14 @@ def _sender_reports(payload: bytes) -> list[tuple[int, int]]:
             reports.append((ntp_seconds, rtp_timestamp))
         offset += length
     return reports
+
+
+def _preferred_challenge(header: str) -> str:
+    """Digest over Basic: Basic would put the camera password on the wire in clear text."""
+    offers = [line.strip() for line in header.split("\n") if line.strip()]
+    if not offers:
+        return ""
+    return next((offer for offer in offers if offer.lower().startswith("digest ")), offers[0])
 
 
 def _digest_fields(value: str) -> dict[str, str]:

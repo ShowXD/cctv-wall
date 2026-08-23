@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Thread
 from typing import Callable, Sequence
 
 from PySide6.QtCore import QTimer, Qt
@@ -15,7 +16,7 @@ from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
 from cctv_wall.performance import PerformanceProfile, media_options_for
 from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
 from cctv_wall.resolvers import ResolveError, StreamResolver
-from cctv_wall.urls import build_url, stream_from_direct_url
+from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
 # Starting four RTSP sessions in the same event-loop turn can overwhelm a weak PC or a
 # camera/NVR with a small connection budget. Stagger starts but keep navigation instant.
@@ -159,6 +160,17 @@ class _Tile:
         self.ticks_until_retry = 0
 
 
+def _release_detached(tiles: Sequence[_Tile]) -> None:
+    """Release players off the Qt thread, then let their surfaces go."""
+    for tile in tiles:
+        try:
+            tile.player.release()
+        except Exception as error:
+            logger().warning("camera=%s release failed: %s", tile.log_label, error)
+        tile.player = None
+        tile.view.deleteLater()
+
+
 def _due_for_retry(tile: _Tile) -> bool:
     """這次稽核該不該重連。不碰 Qt，所以退避節奏可以單獨測試。"""
     if tile.ticks_until_retry > 0:
@@ -293,12 +305,17 @@ class WallView(QWidget):
         self._audit_timer.stop()
         self._playback_timer.stop()
         self._focused_tile = None
-        if self._tiles:
-            logger().info("stopping %d visible camera connection(s)",
-                          sum(tile.player is not None for tile in self._tiles))
-        for tile in self._tiles:
-            self._release(tile)
+        # Native teardown can block on an unhealthy RTSP source; the surface has to
+        # outlive it, so both are handed to a worker instead of stalling navigation.
+        detached = [tile for tile in self._tiles if tile.player is not None]
+        if detached:
+            logger().info("stopping %d visible camera connection(s)", len(detached))
+        for tile in detached:
+            tile.view.hide()
+            tile.view.setParent(None)
         self._tiles.clear()
+        if detached:
+            Thread(target=_release_detached, args=(detached,), daemon=True).start()
 
     def _release(self, tile: _Tile) -> None:
         """釋放一格的播放器；原生解碼器收尾失敗不能連帶影響其他格。"""
@@ -393,8 +410,9 @@ class WallView(QWidget):
                     player.release()
                 except Exception as release_error:  # Preserve the useful connection error.
                     logger().warning("camera=%s failed-player release: %s", tile.log_label, release_error)
-            logger().warning("camera=%s: %s", tile.log_label, error)
-            tile.view.show_notice(str(error), "error")
+            reason = redact(str(error))
+            logger().warning("camera=%s: %s", tile.log_label, reason)
+            tile.view.show_notice(reason, "error")
 
     @staticmethod
     def _log_state_change(tile: _Tile, state: PlaybackState) -> None:

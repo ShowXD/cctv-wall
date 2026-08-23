@@ -7,7 +7,8 @@ import pytest
 
 from cctv_wall import quality, vendors
 from cctv_wall.models import Camera, Site, Workspace
-from cctv_wall.urls import build_url, display_url, is_youtube
+from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, display_url,
+                           is_youtube, redact, stream_from_direct_url)
 
 
 def camera(**overrides) -> Camera:
@@ -207,3 +208,38 @@ class TestCameraReplacement:
         workspace = Workspace(sites=(Site("Yard", (camera, camera)),))
         updated = workspace.with_camera_replaced(camera, replace(camera, stream=4))
         assert [c.stream for c in updated.site("Yard").cameras] == [4, 1]
+
+
+class TestDirectStreamRewrite:
+    @pytest.mark.parametrize("url,expected", [
+        ("rtsp://10.0.0.5:554/live/stream2", 2),
+        ("rtsp://10.0.0.5:554/live?stream=3", 3),
+        ("rtsp://stream1.cam.lan/live/stream2", 2),
+        ("rtsp://stream1.cam.lan/live", None),
+        ("rtsp://10.0.0.5:554/live", None),
+    ])
+    def test_only_the_path_and_query_declare_a_stream(self, url, expected):
+        assert stream_from_direct_url(url) == expected
+
+    def test_a_host_named_like_a_stream_survives_a_rewrite(self):
+        assert (direct_url_with_stream("rtsp://stream1.cam.lan/live/stream2", 3)
+                == "rtsp://stream1.cam.lan/live/stream3")
+
+    def test_query_markers_are_rewritten(self):
+        assert (direct_url_with_stream("rtsp://10.0.0.5:554/live?stream=1", 4)
+                == "rtsp://10.0.0.5:554/live?stream=4")
+
+    def test_local_paths_still_work(self):
+        assert direct_url_with_stream(r"C:\videos\stream1.mp4", 2) == r"C:\videos\stream2.mp4"
+
+    def test_an_unrecognised_url_is_left_alone(self):
+        assert direct_url_with_stream("rtsp://10.0.0.5:554/live", 2) is None
+
+
+class TestRedaction:
+    def test_credentials_in_free_text_are_masked(self):
+        assert redact("failed: rtsp://operator:s3cret@cam.lan/live") == (
+            f"failed: rtsp://{MASK}@cam.lan/live")
+
+    def test_credential_free_text_is_untouched(self):
+        assert redact("failed: rtsp://cam.lan/live") == "failed: rtsp://cam.lan/live"

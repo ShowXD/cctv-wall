@@ -17,6 +17,7 @@ YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "y
 MASK = "****"
 _STREAM_PATH_TOKEN = re.compile(r"(?i)(stream)([1-4])")
 _STREAM_QUERY_TOKEN = re.compile(r"(?i)([?&]stream=)([1-4])")
+_URL_CREDENTIALS = re.compile(r"(?i)([a-z][a-z0-9+.-]*)://[^@/\s]*@")
 
 
 def is_youtube(url: str) -> bool:
@@ -62,9 +63,25 @@ def _mask_url_password(url: str) -> str:
     return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
+def redact(text: str) -> str:
+    """Mask credentials embedded in any URL inside free-form text, for logs and notices."""
+    return _URL_CREDENTIALS.sub(lambda match: f"{match.group(1)}://{MASK}@", text)
+
+
+def _authority_end(url: str) -> int:
+    """Where the host part stops. A hostname such as `stream1.lan` is not a stream marker."""
+    scheme = url.find("://")
+    if scheme < 0:
+        return 0
+    start = scheme + len("://")
+    stops = [index for index in (url.find(c, start) for c in "/?#") if index >= 0]
+    return min(stops) if stops else len(url)
+
+
 def stream_from_direct_url(url: str) -> int | None:
     """Return the explicit stream number in a direct URL, when it is safe to change."""
-    match = _STREAM_PATH_TOKEN.search(url) or _STREAM_QUERY_TOKEN.search(url)
+    tail = url[_authority_end(url):]
+    match = _STREAM_PATH_TOKEN.search(tail) or _STREAM_QUERY_TOKEN.search(tail)
     return int(match.group(2)) if match else None
 
 
@@ -72,8 +89,10 @@ def direct_url_with_stream(url: str, stream: int) -> str | None:
     """Replace recognised stream markers without guessing a vendor-specific URL format."""
     if stream_from_direct_url(url) is None:
         return None
-    updated = _STREAM_PATH_TOKEN.sub(lambda match: f"{match.group(1)}{stream}", url)
-    return _STREAM_QUERY_TOKEN.sub(lambda match: f"{match.group(1)}{stream}", updated)
+    cut = _authority_end(url)
+    head, tail = url[:cut], url[cut:]
+    tail = _STREAM_PATH_TOKEN.sub(lambda match: f"{match.group(1)}{stream}", tail)
+    return head + _STREAM_QUERY_TOKEN.sub(lambda match: f"{match.group(1)}{stream}", tail)
 
 
 def _credentials(camera: Camera) -> str:
