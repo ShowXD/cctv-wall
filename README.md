@@ -26,13 +26,13 @@
 - **兩套播放後端** — VLC（一般播放，硬體需求最低）與 GStreamer（RTCP/NTP 嚴格時間戳同步）
 - **斷線自動重連** — 掉線的那一格自己退避重試（5→10→20→30 秒），不必人工按 `↻`
 - **三種效能檔** — 預設 `low_end`（4 格、GPU 解碼、關音訊），為低階電腦調校
-- **全狀態記憶** — 地點、攝影機、帳密、畫質、效能檔、視窗大小、介面語言自動存回 `workspace.json`
+- **全狀態記憶** — 地點、攝影機、帳密、畫質、效能檔、視窗大小、介面語言自動存回 `workspace.json`，密碼以 Windows DPAPI 加密
 - **失敗隔離** — 單格失敗只顯示紅字，不影響其他畫面
 - **雙語介面** — 繁體中文／English 即時切換
 - **內建事件紀錄** — 不必開終端機就能查看失敗原因
 - **單一 exe** — 內含 VLC 與 GStreamer，現場電腦零安裝
 
-154 個測試，不需要 VLC、不連網。
+184 個測試，不需要 VLC、不連網。
 
 ---
 
@@ -70,7 +70,7 @@ uv run cctv-wall                           # 啟動
 | `uv run cctv-wall` | 啟動 GUI |
 | `uv run cctv-wall --check` | 環境診斷：設定檔位置、libvlc 版本、yt-dlp 版本、嚴格同步可用性 |
 | `uv run cctv-wall --dry-run` | 用假的播放後端建整個 GUI 後立刻結束（不需要 VLC） |
-| `uv run --group dev pytest -q` | 執行 154 個測試 |
+| `uv run --group dev pytest -q` | 執行 184 個測試 |
 | `uv run build cctv-wall` | 打包成單一 exe |
 
 ---
@@ -111,7 +111,7 @@ GitHub Actions 會在 Windows runner 上安裝 VLC、打包、用產出的 exe �
 
 ## ⚠️ 安全性
 
-`workspace.json` 含 **RTSP 明碼密碼**，已列入 `.gitignore`，**永遠不要提交**。
+`workspace.json` 含攝影機 IP 與 RTSP 帳號（密碼已用 DPAPI 加密），已列入 `.gitignore`，**永遠不要提交**。
 CI 每次 push 都會檢查它有沒有被誤加進版控。詳見 [SECURITY.md](SECURITY.md)。
 
 ---

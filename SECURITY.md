@@ -10,13 +10,19 @@
 
 | 檔案 | 內容 | 狀態 |
 | --- | --- | --- |
-| `workspace.json` | 攝影機 IP、RTSP 帳號、**明碼密碼** | 已列入 `.gitignore`，**永遠不要提交** |
+| `workspace.json` | 攝影機 IP、RTSP 帳號、密碼（DPAPI 加密） | 已列入 `.gitignore`，**永遠不要提交** |
 | `workspace.example.json` | 同樣結構，值都是佔位字串 | 可安全提交 |
 | `cctv-wall.log` | 事件紀錄，可能含主機位址 | 已列入 `.gitignore` |
 
-密碼以明碼存放是目前的刻意取捨（現場單機部署、無伺服器）。
-若你的環境需要更高安全等級，只需改 `src/cctv_wall/repository.py`
-——它是唯一讀寫設定檔的模組，可改為讀環境變數或 Windows 認證管理員。
+## 密碼如何存放
+
+存檔時 `password` 欄位以 Windows DPAPI 加密，寫成 `"password": "dpapi:…"`。
+金鑰綁定當前 Windows 使用者帳號，設定檔被複製到別台電腦或別的帳號都解不開
+（解不開時該欄位讀成空字串，程式照常啟動）。其餘欄位仍是明文，設定檔可以手改。
+
+手寫的明文密碼照樣讀得進來，下次存檔時自動加密。加密只在 Windows 生效，
+其他平台原樣存放明文。加解密集中在 `src/cctv_wall/credentials.py`，
+唯一呼叫點是 `src/cctv_wall/repository.py`。
 
 ## 提交前的自我檢查
 
