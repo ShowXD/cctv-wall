@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from cctv_wall.i18n import Translator
 from cctv_wall.player import PlaybackState
+from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _Tile,
                                _due_for_retry)
 
@@ -71,3 +72,38 @@ class TestOutageNotice:
 
     def test_a_tile_being_retried_says_so_instead(self):
         assert "Reconnecting" in self._message(_tile(), retried=True)
+
+
+class TestViewMode:
+    def test_the_default_shows_every_piece_of_chrome(self):
+        view = ViewMode()
+        assert view.chrome_visible and not view.grips_visible
+
+    def test_filling_the_wall_hides_chrome_and_shows_the_grips(self):
+        view = ViewMode().toggle_filled()
+        assert view.filled and not view.chrome_visible and view.grips_visible
+
+    def test_fullscreen_hides_chrome_without_the_grips(self):
+        view = ViewMode().enter_fullscreen(was_maximized=True)
+        assert not view.chrome_visible and not view.grips_visible
+
+    def test_leaving_fullscreen_returns_to_a_normal_wall(self):
+        assert ViewMode().enter_fullscreen(False).exit_fullscreen() == ViewMode()
+
+    def test_leaving_fullscreen_while_filled_stays_immersive(self):
+        view = ViewMode().toggle_filled().enter_fullscreen(False).exit_fullscreen()
+        assert view.filled and not view.chrome_visible and view.grips_visible
+
+    def test_focus_from_a_normal_wall_returns_to_a_normal_wall(self):
+        focused = ViewMode().enter_focus()
+        assert not focused.chrome_visible
+        assert focused.exit_focus().chrome_visible
+
+    def test_focus_from_a_filled_wall_stays_filled_afterwards(self):
+        focused = ViewMode().toggle_filled().enter_focus()
+        assert focused.exit_focus().filled
+
+    def test_transitions_never_mutate_the_previous_value(self):
+        view = ViewMode()
+        view.toggle_filled().enter_focus().enter_fullscreen(True)
+        assert view == ViewMode()

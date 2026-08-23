@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from cctv_wall import repository
+from cctv_wall import credentials, repository
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.repository import (WorkspaceError, default_config_path, load_workspace,
                                   save_workspace)
@@ -117,3 +117,43 @@ class TestConfigPath:
         monkeypatch.setenv(repository.CONFIG_ENV_VAR, str(tmp_path / "pinned.json"))
         assert default_config_path() == tmp_path / "pinned.json"
 
+
+
+def target_text(tmp_path) -> str:
+    return (tmp_path / "workspace.json").read_text(encoding="utf-8")
+
+
+class TestPasswordProtection:
+    def _saved(self, tmp_path, password: str) -> dict:
+        target = tmp_path / "workspace.json"
+        site = Site(name="Office", cameras=(Camera(host="10.0.0.5", user="admin",
+                                                   password=password),))
+        save_workspace(Workspace(sites=(site,)), target)
+        return json.loads(target.read_text(encoding="utf-8"))
+
+    def test_a_password_is_not_written_in_clear_text(self, tmp_path):
+        stored = self._saved(tmp_path, "s3cret")
+        assert stored["sites"][0]["cameras"][0]["password"].startswith(credentials.PREFIX)
+        assert "s3cret" not in target_text(tmp_path)
+
+    def test_a_saved_password_loads_back_unchanged(self, tmp_path):
+        target = tmp_path / "workspace.json"
+        self._saved(tmp_path, "s3cret")
+        assert load_workspace(target).sites[0].cameras[0].password == "s3cret"
+
+    def test_a_hand_written_plain_password_still_loads(self, tmp_path):
+        target = tmp_path / "workspace.json"
+        target.write_text(json.dumps({"sites": [{"name": "Office", "cameras": [
+            {"host": "10.0.0.5", "password": "plain"}]}]}), encoding="utf-8")
+        assert load_workspace(target).sites[0].cameras[0].password == "plain"
+
+    def test_an_undecryptable_password_becomes_empty_rather_than_failing(self, tmp_path):
+        target = tmp_path / "workspace.json"
+        target.write_text(json.dumps({"sites": [{"name": "Office", "cameras": [
+            {"host": "10.0.0.5", "password": f"{credentials.PREFIX}AQAAAA=="}]}]}),
+            encoding="utf-8")
+        assert load_workspace(target).sites[0].cameras[0].password == ""
+
+    def test_an_empty_password_stays_empty(self, tmp_path):
+        stored = self._saved(tmp_path, "")
+        assert stored["sites"][0]["cameras"][0]["password"] == ""

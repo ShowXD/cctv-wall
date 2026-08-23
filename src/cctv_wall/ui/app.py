@@ -8,7 +8,7 @@ from threading import Timer
 from typing import Callable
 
 from PySide6.QtCore import QSize, QTimer, Qt
-from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QSplitter, QStatusBar, QToolButton, QVBoxLayout,
                                QStyle, QWidget)
@@ -23,64 +23,22 @@ from cctv_wall.resolvers import StreamResolver
 from cctv_wall.resources import ResourceMonitor
 from cctv_wall.ui import site_commands
 from cctv_wall.ui.editor import open_editor
+from cctv_wall.ui.frameless import FramelessGrips
 from cctv_wall.ui.logs import show_log_dialog
 from cctv_wall.ui.navigation import SiteNavigation
+from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import WallView
 from cctv_wall.urls import direct_url_with_stream
 
 FactoryBuilder = Callable[[PerformanceProfile, bool], PlayerFactory]
 WorkspaceSaver = Callable[[Workspace], None]
 NATIVE_SHUTDOWN_DEADLINE_SECONDS = 3.0
-FRAMELESS_RESIZE_BORDER = 6
 # Navigation action -> the command that carries it out. Adding one means adding a row.
 SITE_COMMANDS = {
     "duplicate": site_commands.duplicate_site,
     "rename": site_commands.rename_site,
     "delete": site_commands.delete_site,
 }
-
-
-class _FramelessGrip(QWidget):
-    """A transparent, Qt-owned drag or resize strip over a borderless wall window."""
-
-    def __init__(self, owner: "MainWindow", edges: Qt.Edges) -> None:
-        super().__init__(owner)
-        self._owner = owner
-        self._edges = edges
-        self.setStyleSheet("background: transparent;")
-        horizontal = bool(edges & (Qt.Edge.LeftEdge | Qt.Edge.RightEdge))
-        vertical = bool(edges & (Qt.Edge.TopEdge | Qt.Edge.BottomEdge))
-        if horizontal and vertical:
-            cursor = (Qt.CursorShape.SizeFDiagCursor if bool(edges & Qt.Edge.TopEdge)
-                      == bool(edges & Qt.Edge.LeftEdge) else Qt.CursorShape.SizeBDiagCursor)
-        elif horizontal:
-            cursor = Qt.CursorShape.SizeHorCursor
-        elif vertical:
-            cursor = Qt.CursorShape.SizeVerCursor
-        else:
-            cursor = Qt.CursorShape.SizeAllCursor
-        self.setCursor(cursor)
-
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._owner._begin_frameless_drag(self._edges, event.globalPosition().toPoint())
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        if event.buttons() & Qt.MouseButton.LeftButton:
-            self._owner._continue_frameless_drag(event.globalPosition().toPoint())
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._owner._end_frameless_drag()
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -101,18 +59,14 @@ class MainWindow(QMainWindow):
         self._factory = self._create_factory(workspace.strict_sync)
         self._focused_camera: Camera | None = None
         self._page_before_focus = 0
-        self._wall_was_filled_before_focus = False
         self._is_shutdown = False
-        self._is_wall_fullscreen = False
-        self._is_wall_filled = False
-        self._was_maximized = False
-        self._navigation_was_visible = True
+        self._view = ViewMode()
 
         self.setWindowTitle(self._translator.t("app_title"))
         self.setMinimumSize(960, 600)
         self._restore_geometry(workspace.geometry)
         self._build_ui()
-        self._build_frameless_grips()
+        self._grips = FramelessGrips(self)
         self._reload_sites()
         self._resource_timer = QTimer(self)
         self._resource_timer.timeout.connect(self._refresh_resources)
@@ -200,146 +154,63 @@ class MainWindow(QMainWindow):
 
     def _toggle_wall_fullscreen(self) -> None:
         """Fullscreen the Qt shell, never the embedded VLC surface itself."""
-        if self._is_wall_fullscreen:
+        if self._view.fullscreen:
             self._exit_wall_fullscreen()
             return
-        self._is_wall_fullscreen = True
-        self._was_maximized = self.isMaximized()
-        self._navigation_was_visible = self._navigation.isVisible()
-        self._set_wall_chrome_visible(False)
+        self._view = self._view.enter_fullscreen(self.isMaximized())
+        self._apply_view_mode()
         self.showFullScreen()
 
     def _exit_wall_fullscreen(self) -> None:
-        if not self._is_wall_fullscreen:
+        if not self._view.fullscreen:
             return
-        self._is_wall_fullscreen = False
-        if self._is_wall_filled:
-            self._set_wall_chrome_visible(False)
-        else:
-            self._navigation.setVisible(self._navigation_was_visible)
-            self._monitor_header_widget.show()
-            self._control_bar_widget.show()
-            self.statusBar().show()
-        if self._was_maximized:
+        was_maximized = self._view.was_maximized
+        self._view = self._view.exit_fullscreen()
+        self._apply_view_mode()
+        if was_maximized:
             self.showMaximized()
         else:
             self.showNormal()
 
     def _toggle_window_maximized(self) -> None:
         """Fill the existing client area with video without changing the window state."""
-        if self._is_wall_filled:
-            self._is_wall_filled = False
-            self._set_wall_frameless(False)
-            self._set_wall_chrome_visible(True)
-            self._maximize_button.setToolTip(self._translator.t("maximize"))
-            return
-        self._is_wall_filled = True
-        self._set_wall_chrome_visible(False)
-        self._set_wall_frameless(True)
-        self._maximize_button.setToolTip(self._translator.t("restore_window"))
+        self._view = self._view.toggle_filled()
+        self._apply_view_mode()
+        self._maximize_button.setToolTip(self._translator.t(
+            "maximize" if self._view.chrome_visible else "restore_window"))
 
     def _exit_immersive_mode(self) -> None:
-        if self._is_wall_fullscreen:
+        if self._view.fullscreen:
             self._exit_wall_fullscreen()
         elif self._focused_camera is not None:
             self._toggle_camera_focus(self._focused_camera)
-        elif self._is_wall_filled:
+        elif self._view.filled:
             self._toggle_window_maximized()
 
-    def _set_wall_chrome_visible(self, visible: bool) -> None:
-        """Show or hide application chrome and keep the wall layout in the same mode."""
+    def _apply_view_mode(self) -> None:
+        """Bring every widget in line with the current mode. Safe to call repeatedly."""
+        visible = self._view.chrome_visible
+        if visible and not self._view.fullscreen:
+            self._set_wall_frameless(False)
         self._navigation.setVisible(visible)
         self._monitor_header_widget.setVisible(visible)
         self._control_bar_widget.setVisible(visible)
         self.statusBar().setVisible(visible)
         self._wall.set_immersive(not visible)
+        if not visible and not self._view.fullscreen:
+            self._set_wall_frameless(self._view.filled)
+        self._grips.set_visible(self._view.grips_visible)
 
     def _set_wall_frameless(self, frameless: bool) -> None:
-        """Remove only the title-bar pixels; window size and position stay operator-controlled."""
-        current = bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint)
-        if current == frameless:
+        """Remove only the title-bar pixels; size and position stay operator-controlled."""
+        if bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint) == frameless:
             return
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, frameless)
         self.show()
-        self._set_frameless_grips_visible(frameless)
-
-    def _build_frameless_grips(self) -> None:
-        """Create mouse-owning edge strips so embedded native video cannot swallow them."""
-        no_edges = Qt.Edges()
-        self._frameless_grips = (
-            _FramelessGrip(self, no_edges),
-            _FramelessGrip(self, Qt.Edge.TopEdge),
-            _FramelessGrip(self, Qt.Edge.BottomEdge),
-            _FramelessGrip(self, Qt.Edge.LeftEdge),
-            _FramelessGrip(self, Qt.Edge.RightEdge),
-            _FramelessGrip(self, Qt.Edge.TopEdge | Qt.Edge.LeftEdge),
-            _FramelessGrip(self, Qt.Edge.TopEdge | Qt.Edge.RightEdge),
-            _FramelessGrip(self, Qt.Edge.BottomEdge | Qt.Edge.LeftEdge),
-            _FramelessGrip(self, Qt.Edge.BottomEdge | Qt.Edge.RightEdge),
-        )
-        self._frameless_drag_origin = None
-        self._frameless_drag_geometry = None
-        self._frameless_drag_edges = no_edges
-        self._layout_frameless_grips()
-        self._set_frameless_grips_visible(False)
-
-    def _layout_frameless_grips(self) -> None:
-        if not hasattr(self, "_frameless_grips"):
-            return
-        border = FRAMELESS_RESIZE_BORDER
-        resize_strip = 3
-        width, height = self.width(), self.height()
-        move, top, bottom, left, right, top_left, top_right, bottom_left, bottom_right = self._frameless_grips
-        # The uppermost 3px resize; the next 6px drag. They must not overlap,
-        # otherwise the resize strip would swallow the drag gesture.
-        move.setGeometry(border, resize_strip, max(0, width - border * 2), border)
-        top.setGeometry(border, 0, max(0, width - border * 2), resize_strip)
-        bottom.setGeometry(border, max(0, height - border), max(0, width - border * 2), border)
-        left.setGeometry(0, border, border, max(0, height - border * 2))
-        right.setGeometry(max(0, width - border), border, border, max(0, height - border * 2))
-        top_left.setGeometry(0, 0, border, border)
-        top_right.setGeometry(max(0, width - border), 0, border, border)
-        bottom_left.setGeometry(0, max(0, height - border), border, border)
-        bottom_right.setGeometry(max(0, width - border), max(0, height - border), border, border)
-        for grip in self._frameless_grips:
-            grip.raise_()
-
-    def _set_frameless_grips_visible(self, visible: bool) -> None:
-        for grip in self._frameless_grips:
-            grip.setVisible(visible)
-
-    def _begin_frameless_drag(self, edges: Qt.Edges, position) -> None:
-        self._frameless_drag_origin = position
-        self._frameless_drag_geometry = self.geometry()
-        self._frameless_drag_edges = edges
-
-    def _continue_frameless_drag(self, position) -> None:
-        if self._frameless_drag_origin is None or self._frameless_drag_geometry is None:
-            return
-        delta = position - self._frameless_drag_origin
-        original = self._frameless_drag_geometry
-        if not self._frameless_drag_edges:
-            self.move(original.topLeft() + delta)
-            return
-        left, top, right, bottom = original.left(), original.top(), original.right(), original.bottom()
-        if self._frameless_drag_edges & Qt.Edge.LeftEdge:
-            left = min(left + delta.x(), right - self.minimumWidth() + 1)
-        if self._frameless_drag_edges & Qt.Edge.RightEdge:
-            right = max(right + delta.x(), left + self.minimumWidth() - 1)
-        if self._frameless_drag_edges & Qt.Edge.TopEdge:
-            top = min(top + delta.y(), bottom - self.minimumHeight() + 1)
-        if self._frameless_drag_edges & Qt.Edge.BottomEdge:
-            bottom = max(bottom + delta.y(), top + self.minimumHeight() - 1)
-        self.setGeometry(left, top, right - left + 1, bottom - top + 1)
-
-    def _end_frameless_drag(self) -> None:
-        self._frameless_drag_origin = None
-        self._frameless_drag_geometry = None
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._layout_frameless_grips()
-
+        self._grips.relayout()
 
     def _control_bar(self) -> QWidget:
         bar = QFrame()
@@ -525,13 +396,8 @@ class MainWindow(QMainWindow):
             previous.deleteLater()
         self.setWindowTitle(self._translator.t("app_title"))
         self._build_ui()
-        # Rebuilding widgets must not unexpectedly leave immersive mode.  In particular,
-        # language changes are often made from the compact control bar before it is hidden.
-        if self._is_wall_filled or self._is_wall_fullscreen:
-            self._set_wall_chrome_visible(False)
-        self._layout_frameless_grips()
-        self._set_frameless_grips_visible(
-            self._is_wall_filled and not self._is_wall_fullscreen)
+        self._grips.relayout()
+        self._apply_view_mode()
         self._reload_sites()
 
     def _previous_page(self) -> None:
@@ -621,21 +487,15 @@ class MainWindow(QMainWindow):
             self._wall.restore_grid()
             self._focused_camera = None
             self._page = self._page_before_focus
-            if not self._wall_was_filled_before_focus:
-                self._is_wall_filled = False
-                self._set_wall_frameless(False)
-                self._set_wall_chrome_visible(True)
+            self._view = self._view.exit_focus()
         else:
             if not self._wall.focus_camera(camera):
                 return
             self._page_before_focus = self._page
-            self._wall_was_filled_before_focus = self._is_wall_filled
             self._focused_camera = camera
             self._page = 0
-            if not self._is_wall_filled:
-                self._is_wall_filled = True
-                self._set_wall_chrome_visible(False)
-                self._set_wall_frameless(True)
+            self._view = self._view.enter_focus()
+        self._apply_view_mode()
         self._refresh_status()
 
     def _exit_camera_focus_if_needed(self) -> None:
