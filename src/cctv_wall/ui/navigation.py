@@ -4,11 +4,52 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                               QMenu, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, QMenu,
+                               QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
 
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Workspace
+from cctv_wall.models import Camera, Site, Workspace
+
+# (site name, camera index) — the camera index is None on a site row.
+ItemReference = tuple[str, "int | None"]
+
+
+def _reference(item: QTreeWidgetItem) -> ItemReference:
+    return item.data(0, Qt.ItemDataRole.UserRole)
+
+
+class _SiteTree(QTreeWidget):
+    """Sites with their cameras, reorderable by drag inside one level only."""
+
+    def __init__(self, on_reorder: Callable[[], None]) -> None:
+        super().__init__()
+        self._on_reorder = on_reorder
+        self.setHeaderHidden(True)
+        self.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDragDropOverwriteMode(False)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+
+    def dropEvent(self, event) -> None:
+        # A camera dropped onto another site would silently move it between locations;
+        # that belongs in the editor, where it can be reviewed before saving.
+        if not self._is_same_level_reorder(event.position().toPoint()):
+            event.ignore()
+            return
+        super().dropEvent(event)
+        self._on_reorder()
+
+    def _is_same_level_reorder(self, position) -> bool:
+        source = self.currentItem()
+        if source is None:
+            return False
+        if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.OnItem:
+            return False
+        target = self.itemAt(position)
+        if target is None:
+            return source.parent() is None
+        return source.parent() is target.parent()
 
 
 class SiteNavigation(QFrame):
@@ -16,7 +57,9 @@ class SiteNavigation(QFrame):
 
     def __init__(self, on_site_selected: Callable[[str], None],
                  on_settings_requested: Callable[[], None],
-                 on_site_action: Callable[[str, str], None], translator: Translator) -> None:
+                 on_site_action: Callable[[str, str], None], translator: Translator,
+                 on_camera_selected: Callable[[str, Camera], None] | None = None,
+                 on_reorder: Callable[[Workspace], None] | None = None) -> None:
         super().__init__()
         self.setObjectName("siteNavigation")
         self.setMinimumWidth(196)
@@ -24,6 +67,9 @@ class SiteNavigation(QFrame):
         self._on_site_selected = on_site_selected
         self._translator = translator
         self._on_site_action = on_site_action
+        self._on_camera_selected = on_camera_selected
+        self._on_reorder = on_reorder
+        self._workspace = Workspace()
         self._build_ui(on_settings_requested)
 
     def _build_ui(self, on_settings_requested: Callable[[], None]) -> None:
@@ -47,10 +93,9 @@ class SiteNavigation(QFrame):
         self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section.addWidget(self._count)
         layout.addLayout(section)
-        self._sites = QListWidget()
+        self._sites = _SiteTree(self._apply_reorder)
         self._sites.setObjectName("siteList")
-        self._sites.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._sites.currentItemChanged.connect(self._site_changed)
+        self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self._sites, 1)
@@ -61,38 +106,86 @@ class SiteNavigation(QFrame):
         layout.addWidget(settings)
 
     def set_workspace(self, workspace: Workspace) -> None:
+        self._workspace = workspace
         current = workspace.active_site.name if workspace.active_site else ""
+        collapsed = self._collapsed_site_names()
         self._sites.blockSignals(True)
         self._sites.clear()
         for site in workspace.sites:
-            item = QListWidgetItem(site.name)
-            item.setData(Qt.ItemDataRole.UserRole, site.name)
+            item = QTreeWidgetItem([site.name])
+            item.setData(0, Qt.ItemDataRole.UserRole, (site.name, None))
             count = len(site.cameras)
-            item.setToolTip(self._translator.t("camera" if count == 1 else "cameras",
-                                               count=count))
-            self._sites.addItem(item)
+            item.setToolTip(0, self._translator.t("camera" if count == 1 else "cameras",
+                                                  count=count))
+            self._sites.addTopLevelItem(item)
+            for index, camera in enumerate(site.cameras):
+                child = QTreeWidgetItem([camera.label])
+                child.setData(0, Qt.ItemDataRole.UserRole, (site.name, index))
+                child.setToolTip(0, camera.label)
+                item.addChild(child)
+            item.setExpanded(site.name not in collapsed)
             if site.name == current:
                 self._sites.setCurrentItem(item)
         self._sites.blockSignals(False)
         self._count.setText(str(len(workspace.sites)))
 
-    def _site_changed(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
-        if current is not None:
-            self._on_site_selected(str(current.data(Qt.ItemDataRole.UserRole)))
+    def _collapsed_site_names(self) -> frozenset[str]:
+        """Remember only what was collapsed, so a newly added site still opens."""
+        items = (self._sites.topLevelItem(index)
+                 for index in range(self._sites.topLevelItemCount()))
+        return frozenset(item.text(0) for item in items if not item.isExpanded())
+
+    def _item_changed(self, current: QTreeWidgetItem | None,
+                      _previous: QTreeWidgetItem | None) -> None:
+        if current is None:
+            return
+        site_name, camera_index = _reference(current)
+        if camera_index is None:
+            self._on_site_selected(site_name)
+            return
+        camera = self._camera(site_name, camera_index)
+        if camera is not None and self._on_camera_selected is not None:
+            self._on_camera_selected(site_name, camera)
+
+    def _camera(self, site_name: str, index: int) -> Camera | None:
+        site = self._workspace.site(site_name)
+        return site.cameras[index] if site and index < len(site.cameras) else None
+
+    def _apply_reorder(self) -> None:
+        if self._on_reorder is not None:
+            self._on_reorder(self._reordered_workspace())
+
+    def _reordered_workspace(self) -> Workspace:
+        """Read the new order off the tree, keeping every camera's own settings."""
+        sites: list[Site] = []
+        for index in range(self._sites.topLevelItemCount()):
+            item = self._sites.topLevelItem(index)
+            site = self._workspace.site(_reference(item)[0])
+            if site is None:
+                continue
+            cameras = [self._camera(*_reference(item.child(row)))
+                       for row in range(item.childCount())]
+            sites.append(site.with_cameras([c for c in cameras if c is not None]))
+        return self._workspace.with_sites(sites)
 
     def _show_context_menu(self, position) -> None:
         item = self._sites.itemAt(position)
         if item is None:
             return
-        site_name = str(item.data(Qt.ItemDataRole.UserRole))
+        self._sites.setCurrentItem(item)
+        site_name, camera_index = _reference(item)
         menu = QMenu(self)
+        menu.setMinimumWidth(200)
         self._add_action(menu, self._translator.t("watch_site"), "watch", site_name)
-        menu.addSeparator()
-        self._add_action(menu, self._translator.t("add_camera_action"), "add_camera", site_name)
-        self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
-        self._add_action(menu, self._translator.t("rename"), "rename", site_name)
-        menu.addSeparator()
-        self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
+        if camera_index is None:
+            menu.addSeparator()
+            self._add_action(menu, self._translator.t("add_camera_action"), "add_camera", site_name)
+            self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
+            self._add_action(menu, self._translator.t("rename"), "rename", site_name)
+            menu.addSeparator()
+            self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
+        else:
+            self._add_action(menu, self._translator.t("edit_cameras"), "add_camera", site_name)
         menu.exec(self._sites.viewport().mapToGlobal(position))
 
     def _add_action(self, menu: QMenu, label: str, action: str, site_name: str) -> None:

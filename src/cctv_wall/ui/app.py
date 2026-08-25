@@ -99,7 +99,8 @@ class MainWindow(QMainWindow):
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(1)
         self._navigation = SiteNavigation(self._on_site_selected, self._open_settings,
-                                          self._on_site_action, self._translator)
+                                          self._on_site_action, self._translator,
+                                          self._on_camera_selected, self._on_sites_reordered)
         splitter.addWidget(self._navigation)
         splitter.addWidget(self._monitor_panel())
         splitter.setSizes([260, 1180])
@@ -342,6 +343,27 @@ class MainWindow(QMainWindow):
         self._page = 0
         self._show_current_page()
         self._persist()
+
+    def _on_camera_selected(self, site_name: str, camera: Camera) -> None:
+        """Jump to one camera: switch site, turn to its page, then enlarge it."""
+        self._exit_camera_focus_if_needed()
+        self._on_site_selected(site_name)
+        cameras = self._cameras
+        if camera not in cameras:
+            return
+        page = cameras.index(camera) // self._wall.tiles_per_page
+        if page != self._page:
+            self._page = page
+            self._show_current_page()
+        self._toggle_camera_focus(camera)
+
+    def _on_sites_reordered(self, workspace: Workspace) -> None:
+        """Persist a drag immediately; the wall only reloads when the order really changed."""
+        if workspace == self._workspace:
+            return
+        self._workspace = workspace
+        self._persist()
+        self._reload_sites()
 
     def _on_site_action(self, action: str, site_name: str) -> None:
         """Route a navigation shortcut, keeping this window the only workspace owner."""

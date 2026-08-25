@@ -11,10 +11,10 @@ QLabel#productSubtitle, QLabel#eyebrow, QLabel#navigationLabel, QLabel#controlLa
     color: #7f91aa; font-size: 9pt; font-weight: 700; letter-spacing: 1.2px;
 }
 QLabel#countBadge { color: #a8b8cd; background: #253247; border-radius: 9px; padding: 1px 7px; }
-QListWidget#siteList { background: transparent; color: #cdd8e7; border: 0; outline: 0; padding: 0; }
-QListWidget#siteList::item { border-radius: 7px; padding: 11px 10px; margin: 2px 0; }
-QListWidget#siteList::item:hover { background: #202c3d; color: #ffffff; }
-QListWidget#siteList::item:selected { background: #244f76; color: #ffffff; font-weight: 650; }
+QTreeWidget#siteList { background: transparent; color: #cdd8e7; border: 0; outline: 0; padding: 0; }
+QTreeWidget#siteList::item { border-radius: 7px; padding: 9px 8px; margin: 1px 0; }
+QTreeWidget#siteList::item:hover { background: #202c3d; color: #ffffff; }
+QTreeWidget#siteList::item:selected { background: #244f76; color: #ffffff; font-weight: 650; }
 QPushButton#settingsButton { text-align: left; background: #202c3d; color: #e9f1fb; }
 QPushButton#settingsButton:hover { background: #2b3c53; }
 
@@ -80,10 +80,10 @@ QFrame#siteNavigation { background: #ffffff; border: 0; }
 QLabel#productName { color: #13243b; font-size: 16pt; font-weight: 750; letter-spacing: 2px; }
 QLabel#productSubtitle, QLabel#eyebrow, QLabel#navigationLabel, QLabel#controlLabel { color: #667992; font-size: 9pt; font-weight: 700; letter-spacing: 1.2px; }
 QLabel#countBadge { color: #40546d; background: #e8eef5; border-radius: 9px; padding: 1px 7px; }
-QListWidget#siteList { background: transparent; color: #34475f; border: 0; outline: 0; padding: 0; }
-QListWidget#siteList::item { border-radius: 7px; padding: 11px 10px; margin: 2px 0; }
-QListWidget#siteList::item:hover { background: #eaf2fa; color: #102d4c; }
-QListWidget#siteList::item:selected { background: #cfe4f7; color: #123b60; font-weight: 650; }
+QTreeWidget#siteList { background: transparent; color: #34475f; border: 0; outline: 0; padding: 0; }
+QTreeWidget#siteList::item { border-radius: 7px; padding: 9px 8px; margin: 1px 0; }
+QTreeWidget#siteList::item:hover { background: #eaf2fa; color: #102d4c; }
+QTreeWidget#siteList::item:selected { background: #cfe4f7; color: #123b60; font-weight: 650; }
 QPushButton#settingsButton { text-align: left; background: #edf3f8; color: #1d3e60; border-color: #c7d6e5; }
 QPushButton#settingsButton:hover { background: #dceaf5; }
 QWidget#monitorPanel { background: #f4f7fb; }
