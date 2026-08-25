@@ -245,7 +245,14 @@ class WorkspaceEditor(QDialog):
         if not self._advanced_scroll.isVisible():
             self.resize(self.width(), 620)
 
+    def _collapsed_site_names(self) -> frozenset[str]:
+        """Remember only what was collapsed, so a newly added site still opens."""
+        items = (self._tree.topLevelItem(index)
+                 for index in range(self._tree.topLevelItemCount()))
+        return frozenset(item.text(0) for item in items if not item.isExpanded())
+
     def _reload_tree(self) -> None:
+        collapsed = self._collapsed_site_names()
         self._tree.blockSignals(True)
         self._tree.clear()
         for site_index, site in enumerate(self._draft):
@@ -260,7 +267,7 @@ class WorkspaceEditor(QDialog):
                 camera_item.setSizeHint(0, QSize(0, 38))
                 camera_item.setData(0, Qt.ItemDataRole.UserRole, (site_index, camera_index))
                 site_item.addChild(camera_item)
-            site_item.setExpanded(True)
+            site_item.setExpanded(site.name not in collapsed)
         self._tree.blockSignals(False)
 
     def _on_tree_select(self) -> None:
