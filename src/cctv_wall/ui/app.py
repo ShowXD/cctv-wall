@@ -20,7 +20,7 @@ from cctv_wall.models import Camera, Workspace
 from cctv_wall.performance import PROFILES, PerformanceProfile, profile_for
 from cctv_wall.player import PlaybackError, PlayerFactory
 from cctv_wall.resolvers import StreamResolver
-from cctv_wall.resources import ResourceMonitor
+from cctv_wall.resources import ProcessUsage, ResourceMonitor
 from cctv_wall.ui import site_commands
 from cctv_wall.ui.editor import open_editor
 from cctv_wall.ui.frameless import FramelessGrips
@@ -318,11 +318,20 @@ class MainWindow(QMainWindow):
     def _refresh_resources(self) -> None:
         usage = self._resource_monitor.sample()
         unknown = self._translator.t("usage_unknown")
-        cpu = f"{usage.cpu_percent:.0f}%" if usage.cpu_percent is not None else unknown
+        cpu = self._cpu_text(usage, unknown)
         memory = (f"{usage.memory_mebibytes:.0f} MB"
                   if usage.memory_mebibytes is not None else unknown)
         self._resource_status.setText(self._translator.t(
             "usage", players=self._wall.allocated_player_count, cpu=cpu, memory=memory))
+
+    def _cpu_text(self, usage: ProcessUsage, unknown: str) -> str:
+        """Say how many cores the wall is worth, not just a number that passes 100%."""
+        if usage.cpu_percent is None:
+            return unknown
+        if usage.machine_percent is None:
+            return f"{usage.cpu_percent:.0f}%"
+        return self._translator.t("cpu_cores", cores=usage.cores_used,
+                                  total=usage.core_count, percent=usage.machine_percent)
 
     def _on_site_selected(self, site_name: str) -> None:
         if not site_name or site_name == self._active_site_name:

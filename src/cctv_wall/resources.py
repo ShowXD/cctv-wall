@@ -10,8 +10,22 @@ from ctypes import wintypes
 
 @dataclass(frozen=True, slots=True)
 class ProcessUsage:
+    """cpu_percent counts one saturated core as 100, so it exceeds 100 on many cores."""
+
     cpu_percent: float | None
     memory_mebibytes: float | None
+    core_count: int | None = None
+
+    @property
+    def cores_used(self) -> float | None:
+        return None if self.cpu_percent is None else self.cpu_percent / 100
+
+    @property
+    def machine_percent(self) -> float | None:
+        """The same load as a share of the whole machine, matching Task Manager."""
+        if self.cpu_percent is None or not self.core_count:
+            return None
+        return self.cpu_percent / self.core_count
 
 
 class _ProcessMemoryCounters(ctypes.Structure):
@@ -30,6 +44,7 @@ class ResourceMonitor:
 
     def __init__(self) -> None:
         self._available = os.name == "nt"
+        self._cores = os.cpu_count()
         self._last_cpu_time = 0.0
         self._last_wall_time = time.perf_counter()
         if self._available:
@@ -85,6 +100,7 @@ class ResourceMonitor:
             if not self._psapi.GetProcessMemoryInfo(self._handle, ctypes.byref(counters),
                                                      wintypes.DWORD(counters.cb)):
                 raise OSError(ctypes.get_last_error(), "GetProcessMemoryInfo failed")
-            return ProcessUsage(cpu, counters.WorkingSetSize / (1024 * 1024))
+            return ProcessUsage(cpu, counters.WorkingSetSize / (1024 * 1024),
+                                self._cores)
         except OSError:
             return ProcessUsage(None, None)
