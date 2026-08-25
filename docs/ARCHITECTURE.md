@@ -23,7 +23,7 @@ src/cctv_wall/
   sync_probe.py   逐台攝影機探測 RTCP Sender Report 可用性
   build.py        版本化單一 EXE 發行包建置（build cctv-wall）
   ui/theme.py         全站 Qt 視覺主題，明／暗兩套（不含任何行為）
-  ui/navigation.py    左側地點導覽：只顯示與切換，決策全部往上委派
+  ui/navigation.py    左側地點／攝影機樹狀導覽：只顯示、切換與排序，決策全部往上委派
   ui/wall.py          Qt 影像牆：只維持可見格數的播放器與原生 VLC surface
   ui/editor.py        Qt 設定視窗：編輯拋棄式草稿，只在儲存時產出新的 Workspace
   ui/site_commands.py 地點層級指令（複製／改名／刪除）：回傳新的 Workspace 或 None

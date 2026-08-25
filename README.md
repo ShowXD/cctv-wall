@@ -32,7 +32,7 @@
 - **內建事件紀錄** — 不必開終端機就能查看失敗原因
 - **單一 exe** — 內含 VLC 與 GStreamer，現場電腦零安裝
 
-184 個測試，不需要 VLC、不連網。
+189 個測試，不需要 VLC、不連網。
 
 ---
 
@@ -70,7 +70,7 @@ uv run cctv-wall                           # 啟動
 | `uv run cctv-wall` | 啟動 GUI |
 | `uv run cctv-wall --check` | 環境診斷：設定檔位置、libvlc 版本、yt-dlp 版本、嚴格同步可用性 |
 | `uv run cctv-wall --dry-run` | 用假的播放後端建整個 GUI 後立刻結束（不需要 VLC） |
-| `uv run --group dev pytest -q` | 執行 184 個測試 |
+| `uv run --group dev pytest -q` | 執行 189 個測試 |
 | `uv run build cctv-wall` | 打包成單一 exe |
 
 ---
