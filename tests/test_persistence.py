@@ -131,6 +131,8 @@ class TestPasswordProtection:
         save_workspace(Workspace(sites=(site,)), target)
         return json.loads(target.read_text(encoding="utf-8"))
 
+    @pytest.mark.skipif(not credentials.is_available(),
+                        reason="DPAPI is Windows-only; elsewhere the password is stored as-is")
     def test_a_password_is_not_written_in_clear_text(self, tmp_path):
         stored = self._saved(tmp_path, "s3cret")
         assert stored["sites"][0]["cameras"][0]["password"].startswith(credentials.PREFIX)
