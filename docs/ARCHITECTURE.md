@@ -30,6 +30,7 @@ src/cctv_wall/
   ui/site_commands.py 地點層級指令（複製／改名／刪除）：回傳新的 Workspace 或 None
   ui/logs.py          事件紀錄檢視對話框（唯讀）
   ui/ai_panel.py      AI 結果側欄：把 socket 執行緒的事件轉回 GUI、延遲後分派到畫格
+  ui/ai_feed_editor.py AI 辨識連線對話框：連線、攝影機對照、訊息格式（表單↔設定的轉換可單獨測試）
   ui/startup.py       啟動進度畫面
   ui/app.py           Qt 主視窗：組裝上述元件、持有 Workspace 並負責記憶
   __main__.py     進入點：唯一知道真實實作的地方（--check / --dry-run）
