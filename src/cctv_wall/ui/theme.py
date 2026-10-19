@@ -35,6 +35,9 @@ QLabel#tileNotice { color: #f3c977; background: #2a2114; padding: 8px 10px; font
 QLabel#tileNotice[level='error'] { color: #ff9d9d; background: #321b21; }
 QFrame#videoTile[listening='true'] { border-color: #58c07a; }
 QLabel#tileAudio { color: #9fe8b6; background: #14251a; padding: 4px 8px; font-size: 9pt; }
+QLabel#tileAi { color: #a9d4ff; background: #13202f; padding: 3px 8px; font-size: 9pt; }
+QListWidget#aiEventList { font-size: 9pt; }
+QLabel#aiStatus[connected='false'] { color: #f3c977; }
 QWidget#emptyWall { background: #111924; border: 1px dashed #34445a; border-radius: 10px; }
 QLabel#emptyWallTitle { color: #e9eff8; font-size: 16pt; font-weight: 650; }
 QLabel#emptyWallDetail { color: #8fa0b7; font-size: 11pt; }
@@ -102,6 +105,9 @@ QLabel#tileNotice { color: #a33333; background: #fff0f0; padding: 8px 10px; font
 QLabel#tileNotice[level='error'] { color: #a33333; background: #fff0f0; }
 QFrame#videoTile[listening='true'] { border-color: #2f9e57; }
 QLabel#tileAudio { color: #1c6b3c; background: #eaf7ee; padding: 4px 8px; font-size: 9pt; }
+QLabel#tileAi { color: #1d4f80; background: #e8f1fa; padding: 3px 8px; font-size: 9pt; }
+QListWidget#aiEventList { font-size: 9pt; }
+QLabel#aiStatus[connected='false'] { color: #a35f00; }
 QWidget#emptyWall { background: #ffffff; border: 1px dashed #adbdcf; border-radius: 10px; }
 QLabel#emptyWallTitle { color: #24384e; font-size: 16pt; font-weight: 650; }
 QLabel#emptyWallDetail { color: #6a7e96; font-size: 11pt; }
