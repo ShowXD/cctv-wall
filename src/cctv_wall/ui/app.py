@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QComboBox, QSpinBox, QFrame, QHBoxLayout, QLabel,
 from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import LANGUAGE_LABELS, Translator
-from cctv_wall.models import Camera, Site, Workspace
+from cctv_wall.models import TILES_LIMIT, Camera, Site, Workspace
 from cctv_wall.player import PlaybackError, PlayerFactory
 from cctv_wall.resources import ProcessUsage, ResourceMonitor
 from cctv_wall.ui import site_commands
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         self._tiles_box.setObjectName("tilesBox")
         self._tiles_box.setToolTip(self._translator.t("tiles_per_page"))
         self._tiles_box.setSuffix(self._translator.t("tiles_suffix"))
-        self._tiles_box.setRange(1, self._workspace.max_tiles)
+        self._tiles_box.setRange(1, TILES_LIMIT)
         self._tiles_box.setValue(self._workspace.tiles_per_page)
         # Typing "12" must not first reconnect a 1-tile page: apply on Enter, focus-out or arrows.
         self._tiles_box.setKeyboardTracking(False)
@@ -526,7 +526,6 @@ class MainWindow(QMainWindow):
     def _open_settings(self, site_name: str | None = None) -> None:
         open_editor(self, self._workspace, self._on_workspace_edited, self._translator,
                     initial_site_name=site_name)
-        self._apply_tiles_cap()
         self._reload_sites()
 
     def _on_workspace_edited(self, workspace: Workspace) -> None:
@@ -534,16 +533,6 @@ class MainWindow(QMainWindow):
         self._workspace = workspace
         self._persist()
         self._navigation.set_workspace(workspace)
-
-    def _apply_tiles_cap(self) -> None:
-        """The settings dialog may have lowered the cap, and with it the page size."""
-        self._tiles_box.blockSignals(True)
-        self._tiles_box.setRange(1, self._workspace.max_tiles)
-        self._tiles_box.setValue(self._workspace.tiles_per_page)
-        self._tiles_box.blockSignals(False)
-        if self._wall.tiles_per_page != self._workspace.tiles_per_page:
-            self._wall.stop()
-            self._wall.configure(self._factory, self._workspace.tiles_per_page)
 
     @property
     def _displayed_cameras(self) -> tuple[Camera, ...]:

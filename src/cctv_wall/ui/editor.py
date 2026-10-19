@@ -1,4 +1,4 @@
-"""Settings dialog: sites, cameras and the page-size cap.
+"""Settings dialog: sites and cameras.
 
 There is no draft: every action is written to the workspace at once through
 `on_change`. The wall reconnects once when the dialog closes, not on every edit.
@@ -10,12 +10,12 @@ from typing import Callable
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMenu,
-                               QMessageBox, QPushButton, QSpinBox, QSplitter, QTreeWidgetItem,
+                               QMessageBox, QPushButton, QSplitter, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
-from cctv_wall.models import TILES_LIMIT, Camera, Site, Workspace
+from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
 from cctv_wall.ui.flat_tree import FlatTree
 
@@ -50,17 +50,6 @@ class WorkspaceEditor(QDialog):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        cap = QHBoxLayout()
-        cap.addWidget(QLabel(self._translator.t("max_tiles")))
-        self._max_tiles = QSpinBox()
-        self._max_tiles.setRange(1, TILES_LIMIT)
-        self._max_tiles.setValue(self._workspace.max_tiles)
-        self._max_tiles.setKeyboardTracking(False)
-        self._max_tiles.valueChanged.connect(self._set_max_tiles)
-        cap.addWidget(self._max_tiles)
-        cap.addStretch(1)
-        layout.addLayout(cap)
-
         splitter = QSplitter()
         self._tree = FlatTree()
         self._tree.itemSelectionChanged.connect(self._on_tree_select)
@@ -206,9 +195,6 @@ class WorkspaceEditor(QDialog):
         site = self._workspace.sites[site_index]
         return self._with_site(site_index, site.with_cameras(cameras))
 
-    def _set_max_tiles(self, value: int) -> None:
-        self._commit(lambda: self._workspace.with_max_tiles(value), self._current_reference())
-
     def _add_site(self) -> None:
         name = self._workspace.unique_site_name(self._translator.t("untitled_site"))
         index = len(self._workspace.sites)
@@ -319,9 +305,6 @@ class WorkspaceEditor(QDialog):
         self._commit(lambda: self._with_cameras(site_index, cameras), (site_index, target))
 
     # ---- form ---------------------------------------------------------------------------
-
-    def _current_reference(self) -> tuple[int, int | None] | None:
-        return None if self._site_index is None else (self._site_index, self._camera_index)
 
     def _fill_form(self, camera: Camera | None) -> None:
         self._error.clear()

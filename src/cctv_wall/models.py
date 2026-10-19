@@ -24,8 +24,8 @@ MAX_PORT = 65535
 NAME_LIMIT = 48
 SCHEMA_VERSION = 1
 DEFAULT_TILES_PER_PAGE = 4
-DEFAULT_MAX_TILES = 16
-TILES_LIMIT = 64
+# A fixed ceiling on concurrent decoders; more than this is unwatchable on one screen anyway.
+TILES_LIMIT = 36
 # Older files stored a named performance profile instead of a tile count.
 LEGACY_PROFILE_TILES = {"low_end": 4, "balanced": 9, "full": 16}
 DEFAULT_GEOMETRY = "1280x800"
@@ -211,7 +211,6 @@ class Workspace:
     sites: tuple[Site, ...] = ()
     last_site: str = ""
     tiles_per_page: int = DEFAULT_TILES_PER_PAGE
-    max_tiles: int = DEFAULT_MAX_TILES
     geometry: str = DEFAULT_GEOMETRY
     language: str = DEFAULT_LANGUAGE
     strict_sync: bool = False
@@ -257,14 +256,12 @@ class Workspace:
         if duplicate:
             raise ValueError(f"duplicate site name {duplicate!r}")
         language = _text(raw.get("language")) or DEFAULT_LANGUAGE
-        max_tiles = _bounded(raw.get("max_tiles"), DEFAULT_MAX_TILES, 1, TILES_LIMIT)
         return cls(
             sites=tuple(built),
             last_site=_text(raw.get("last_site")),
             tiles_per_page=_bounded(raw.get("tiles_per_page", LEGACY_PROFILE_TILES.get(
                 _text(raw.get("performance")), DEFAULT_TILES_PER_PAGE)),
-                DEFAULT_TILES_PER_PAGE, 1, max_tiles),
-            max_tiles=max_tiles,
+                DEFAULT_TILES_PER_PAGE, 1, TILES_LIMIT),
             geometry=_text(raw.get("geometry")) or DEFAULT_GEOMETRY,
             language=language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE,
             strict_sync=_flag(raw.get("strict_sync", False)),
@@ -277,7 +274,6 @@ class Workspace:
             "version": SCHEMA_VERSION,
             "last_site": self.last_site,
             "tiles_per_page": self.tiles_per_page,
-            "max_tiles": self.max_tiles,
             "geometry": self.geometry,
             "language": self.language,
             "strict_sync": self.strict_sync,
@@ -308,12 +304,7 @@ class Workspace:
         return replace(self, last_site=name)
 
     def with_tiles_per_page(self, tiles: int) -> "Workspace":
-        return replace(self, tiles_per_page=_bounded(tiles, self.tiles_per_page, 1, self.max_tiles))
-
-    def with_max_tiles(self, max_tiles: int) -> "Workspace":
-        """Lowering the cap also lowers the current page size so it never exceeds it."""
-        limit = _bounded(max_tiles, self.max_tiles, 1, TILES_LIMIT)
-        return replace(self, max_tiles=limit, tiles_per_page=min(self.tiles_per_page, limit))
+        return replace(self, tiles_per_page=_bounded(tiles, self.tiles_per_page, 1, TILES_LIMIT))
 
     def with_geometry(self, geometry: str) -> "Workspace":
         return replace(self, geometry=geometry)
