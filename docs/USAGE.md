@@ -237,7 +237,7 @@ RTSP 一律走 TCP（`:rtsp-tcp`）：多一點延遲，換來掉封包時不會
 | `tiles_per_page` | 否 | `4` | 1–36；舊版的 `max_tiles` 會被忽略 |
 | `sidebar_width` | 否 | `260` | 160–800 |
 | `sidebar_visible` | 否 | `true` | — |
-| `strict_sync` | 否 | `false` | 是否使用 GStreamer 嚴格時間戳同步 |
+| `strict_sync` | 否 | `false` | 是否使用 GStreamer 嚴格時間戳同步；開啟後每格要等到關鍵影格與共同播放時間才出畫面，期間畫格下方顯示「同步中」 |
 | `language` | 否 | `zh_TW` | `zh_TW`（繁體中文）或 `en`；可於主畫面切換 |
 
 舊欄位（攝影機的 `host`／`port`／`vendor`／`path_template`／`stream`／`quality`，

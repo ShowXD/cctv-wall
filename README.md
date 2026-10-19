@@ -35,7 +35,7 @@
 - **AI 結果對照** — 地點可設定多條 TCP 來源（每行一筆 JSON，一條可帶多台攝影機），結果延遲對齊後顯示在畫格下方與側欄
 - **單一 exe** — 內含 VLC 與 GStreamer，現場電腦零安裝
 
-190 個測試，不需要 VLC、不連網。
+192 個測試，不需要 VLC、不連網。
 
 ---
 
@@ -73,7 +73,7 @@ uv run cctv-wall                           # 啟動
 | `uv run cctv-wall` | 啟動 GUI |
 | `uv run cctv-wall --check` | 環境診斷：設定檔位置、libvlc 版本、嚴格同步可用性 |
 | `uv run cctv-wall --dry-run` | 用假的播放後端建整個 GUI 後立刻結束（不需要 VLC） |
-| `uv run --group dev pytest -q` | 執行 190 個測試 |
+| `uv run --group dev pytest -q` | 執行 192 個測試 |
 | `uv run build cctv-wall` | 打包成單一 exe |
 
 ---

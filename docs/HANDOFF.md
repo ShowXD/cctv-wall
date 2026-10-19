@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 190 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 192 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **190 passed**（2026-10-19，`main`，`.venv/Scripts/python -m pytest -q`） |
+| 測試 | **192 passed**（2026-10-19，`main`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -41,17 +41,26 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-19：AI 辨識連線對話框改善（分支 `feature/ai-feed-dialog`）
 
-**狀態：已實作、已驗證，未 commit。**
+**狀態：已實作、已驗證，依功能分批 commit 並合併回 `main`（未 push）。**
 
 - 右鍵選單（側欄、影像格）改以主視窗為 parent：libvlc 讓側欄變成原生子視窗，選單掛在它下面時
   Qt 會印 `QWidgetWindow(... siteNavigationWindow) must be a top level window.`。已用腳本重現並確認消失。
 - 側欄按鈕文字改為「AI 辨識連線」（無 …，新 key `ai_feeds_button`）；右鍵選單項目仍有 …（會開對話框）。
-- 攝影機對照表改為「每台攝影機一列、旁邊填 AI 端識別值」，自動列出本地點所有攝影機，留空＝不屬於
-  這條連線；對到已改名／刪除攝影機的舊對照仍列在最後，清空即移除。移除「新增／刪除對照」按鈕與 key。
-  資料格式不變（`cameras` 仍是識別值 → 攝影機名稱）。
+- 攝影機對照：試過「每台攝影機一列」，使用者的 Demo 地點攝影機多半沒有名稱而只列出一台，最後改回
+  「AI 端識別值＋攝影機下拉選單」。真正原因是對應只認 `Camera.name`，未命名的
+  攝影機進不了選單；現在 AI 對應一律用 `Camera.label`（未命名時是不含帳密的網址）：對照選單、
+  `WallView.show_ai_event`、AI 側欄篩選、`Site` 的唯一性檢查都改用 label。「新增對照」預選尚未被任何連線
+  使用的攝影機。資料格式不變（`cameras` 仍是識別值 → 顯示名稱）。
+- 嚴格同步的綠畫面：GStreamer 從 GOP 中途開始解碼，關鍵影格前的 P-frame 沒有參考畫面而輸出綠色。
+  `rtph264depay` 設 `wait-for-keyframe`、`request-keyframe`；`GStreamerSyncPlayer.state()` 在 sink 還沒有
+  `last-sample`（第一張畫面）前回報 OPENING，畫格下方顯示「同步中 — 等待共同播放時間…」（level `sync`）。
+  已用腳本確認提示顯示／消失與管線建立；**未用實際攝影機驗證綠畫面消失**。
 - IP 與連接埠放同一行。
 - 未做：依 `created` 時間自動建議顯示延遲（見對話中的說明：只能量到 AI 端延遲，影像延遲讀不到）。
-- 檢查：`uv run --group dev pytest -q` → 190 passed；腳本操作對話框確認列出／存檔結果、截圖確認版面。
+- 關閉程式時偶發 `RuntimeError: Internal C++ object (VideoTile) already deleted`（`_release_detached` 執行緒）：
+  `WallView.stop()` 把畫格設成無 parent 交給背景執行緒釋放，程式結束時 Qt 可能先刪掉它；`deleteLater()`
+  遇到已刪除的物件改為略過。新增回歸測試 `TestReleaseDetached`（修正前失敗、修正後通過）。
+- 檢查：`uv run --group dev pytest -q` → 192 passed；腳本操作對話框確認列出／存檔結果、截圖確認版面。
 
 ---
 
@@ -350,7 +359,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **190 passed**。
+2. `uv run --group dev pytest -q` → 應為 **192 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

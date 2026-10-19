@@ -106,7 +106,7 @@ class VideoTile(QFrame):
         self._set_tooltip()
         # Transient buffering is normal for CCTV streams.  Only show a panel when an
         # operator needs to act, otherwise preserve every pixel for video.
-        if level != "error":
+        if level not in ("error", "sync"):
             self._notice.hide()
             return
         self._notice.setText(message)
@@ -341,7 +341,7 @@ class WallView(QWidget):
     def show_ai_event(self, camera_name: str, text: str) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
         for tile in self._tiles:
-            if tile.view.camera.name == camera_name:
+            if tile.view.camera.label == camera_name:
                 tile.view.show_ai_event(text)
 
     def stop(self) -> None:
@@ -479,6 +479,13 @@ class WallView(QWidget):
         if not still_opening:
             self._playback_timer.stop()
 
+    def _show_opening(self, tile: _Tile) -> None:
+        """Strict sync holds every picture for its shared delay, so say why the tile is still empty."""
+        if getattr(self._factory, "synchronized", False):
+            tile.view.show_notice(self._translator.t("syncing"), "sync")
+        else:
+            tile.view.show_notice(self._translator.t("connection_waiting"), "warning")
+
     def _start(self, tile: _Tile) -> None:
         player: Player | None = None
         try:
@@ -493,6 +500,8 @@ class WallView(QWidget):
             self._log_state_change(tile, state)
             if state == PlaybackState.PLAYING:
                 tile.view.set_playing()
+            else:
+                self._show_opening(tile)
         except (PlaybackError, ValueError, OSError) as error:
             if player is not None:
                 try:
