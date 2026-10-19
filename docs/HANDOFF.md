@@ -39,10 +39,25 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-19：AI 辨識連線對話框改善（分支 `feature/ai-feed-dialog`）
+
+**狀態：已實作、已驗證，未 commit。**
+
+- 右鍵選單（側欄、影像格）改以主視窗為 parent：libvlc 讓側欄變成原生子視窗，選單掛在它下面時
+  Qt 會印 `QWidgetWindow(... siteNavigationWindow) must be a top level window.`。已用腳本重現並確認消失。
+- 側欄按鈕文字改為「AI 辨識連線」（無 …，新 key `ai_feeds_button`）；右鍵選單項目仍有 …（會開對話框）。
+- 攝影機對照表改為「每台攝影機一列、旁邊填 AI 端識別值」，自動列出本地點所有攝影機，留空＝不屬於
+  這條連線；對到已改名／刪除攝影機的舊對照仍列在最後，清空即移除。移除「新增／刪除對照」按鈕與 key。
+  資料格式不變（`cameras` 仍是識別值 → 攝影機名稱）。
+- IP 與連接埠放同一行。
+- 未做：依 `created` 時間自動建議顯示延遲（見對話中的說明：只能量到 AI 端延遲，影像延遲讀不到）。
+- 檢查：`uv run --group dev pytest -q` → 190 passed；腳本操作對話框確認列出／存檔結果、截圖確認版面。
+
+---
+
 ## 2026-10-19：介面改版與功能精簡（分支 `refactor/ui-redesign`）
 
 **狀態：已實作、已驗證，依功能分批 commit 在 `refactor/ui-redesign`，已合併回 `main` 並 push，分支已刪除。**
-下一步：使用者確認後合併回 `main`；之後可考慮讓工具列 `AI` 按鈕常駐（入口目前只在地點右鍵）。
 navbar（選單列）已提出分流建議但使用者暫不實作。
 
 第二輪微調（使用者試用後回饋，227 passed）：

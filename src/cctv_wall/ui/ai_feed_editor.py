@@ -5,7 +5,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
                                QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget)
@@ -147,34 +148,31 @@ class AiFeedsDialog(QDialog):
         self._host = QLineEdit()
         self._host.textEdited.connect(self._refresh_current_label)
         self._port = QLineEdit()
+        self._port.setPlaceholderText(self._translator.t("port"))
+        self._port.setMaximumWidth(90)
         self._port.textEdited.connect(self._refresh_current_label)
+        address = QHBoxLayout()
+        address.addWidget(self._host, 1)
+        address.addWidget(QLabel(":"))
+        address.addWidget(self._port)
         self._delay = QSpinBox()
         self._delay.setRange(0, MAX_DELAY_MS)
         self._delay.setSingleStep(100)
         self._delay.setSuffix(" ms")
         self._delay.setToolTip(self._translator.t("ai_delay_help"))
-        form.addRow(self._translator.t("ai_host"), self._host)
-        form.addRow(self._translator.t("port"), self._port)
+        form.addRow(self._translator.t("ai_host"), address)
         form.addRow(self._translator.t("ai_delay"), self._delay)
         box.addWidget(basic)
 
         mapping = QGroupBox(self._translator.t("ai_camera_map"))
         mapping_box = QVBoxLayout(mapping)
         self._table = QTableWidget(0, 2)
-        self._table.setHorizontalHeaderLabels([self._translator.t("ai_source_id"),
-                                               self._translator.t("ai_camera")])
+        self._table.setHorizontalHeaderLabels([self._translator.t("ai_camera"),
+                                               self._translator.t("ai_source_id")])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().hide()
-        self._table.setMinimumHeight(120)
+        self._table.setMinimumHeight(190)   # header + five cameras without scrolling
         mapping_box.addWidget(self._table)
-        row_buttons = QHBoxLayout()
-        for text, action in ((self._translator.t("ai_add_row"), lambda: self._add_row("", "")),
-                             (self._translator.t("ai_remove_row"), self._remove_row)):
-            button = QPushButton(text)
-            button.clicked.connect(action)
-            row_buttons.addWidget(button)
-        row_buttons.addStretch(1)
-        mapping_box.addLayout(row_buttons)
         box.addWidget(mapping, 2)
 
         advanced = QGroupBox(self._translator.t("ai_advanced"))
@@ -213,8 +211,10 @@ class AiFeedsDialog(QDialog):
         self._port.setText(form.port)
         self._delay.setValue(form.delay_ms)
         self._table.setRowCount(0)
-        for source, camera in form.mapping:
-            self._add_row(source, camera)
+        ids = {camera: source for source, camera in form.mapping}
+        # A mapping to a camera that was renamed or removed stays visible until cleared.
+        for camera in [*self._camera_names, *(c for c in ids if c not in self._camera_names)]:
+            self._add_row(camera, ids.get(camera, ""))
         self._advanced.setPlainText(form.advanced)
 
     def _store_current(self) -> None:
@@ -222,10 +222,9 @@ class AiFeedsDialog(QDialog):
             return
         rows = []
         for row in range(self._table.rowCount()):
-            source = self._table.item(row, 0)
-            combo = self._table.cellWidget(row, 1)
-            rows.append((source.text() if source else "",
-                         combo.currentText() if isinstance(combo, QComboBox) else ""))
+            source = self._table.item(row, 1).text().strip()
+            if source:
+                rows.append((source, self._table.item(row, 0).text()))
         self._forms[self._current] = FeedForm(self._host.text().strip(), self._port.text().strip(),
                                               self._delay.value(), rows,
                                               self._advanced.toPlainText())
@@ -235,21 +234,13 @@ class AiFeedsDialog(QDialog):
             self._list.item(self._current).setText(
                 self._feed_label(self._host.text().strip(), self._port.text().strip()))
 
-    def _add_row(self, source: str, camera: str) -> None:
+    def _add_row(self, camera: str, source: str) -> None:
         row = self._table.rowCount()
         self._table.insertRow(row)
-        self._table.setItem(row, 0, QTableWidgetItem(source))
-        combo = QComboBox()
-        names = list(self._camera_names)
-        if camera and camera not in names:
-            names.append(camera)   # keep a mapping to a renamed camera visible, not dropped
-        combo.addItems(names)
-        combo.setCurrentIndex(names.index(camera) if camera else -1)
-        self._table.setCellWidget(row, 1, combo)
-
-    def _remove_row(self) -> None:
-        if self._table.currentRow() >= 0:
-            self._table.removeRow(self._table.currentRow())
+        name = QTableWidgetItem(camera)
+        name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._table.setItem(row, 0, name)
+        self._table.setItem(row, 1, QTableWidgetItem(source))
 
     def _add_feed(self) -> None:
         self._store_current()

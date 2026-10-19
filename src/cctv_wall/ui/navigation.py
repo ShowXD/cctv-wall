@@ -122,7 +122,7 @@ class SiteNavigation(QFrame):
         settings.setObjectName("settingsButton")
         settings.clicked.connect(on_settings_requested)
         layout.addWidget(settings)
-        self._ai_button = QPushButton(self._translator.t("ai_feeds_action"))
+        self._ai_button = QPushButton(self._translator.t("ai_feeds_button"))
         self._ai_button.setObjectName("settingsButton")
         self._ai_button.clicked.connect(lambda: self._on_site_action("ai_feeds", ""))
         layout.addWidget(self._ai_button)
