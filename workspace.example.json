@@ -2,7 +2,6 @@
   "version": 1,
   "last_site": "Taipei Office",
   "tiles_per_page": 4,
-  "max_tiles": 16,
   "geometry": "1280x800+78+78",
   "language": "zh_TW",
   "strict_sync": false,

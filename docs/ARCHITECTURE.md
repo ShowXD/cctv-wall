@@ -65,7 +65,7 @@ cctv_wall.spec    PyInstaller 打包設定
 ## 效能設計（低階電腦）
 
 已不再有效能檔。每頁格數由操作員在頂部列設定（`Workspace.tiles_per_page`，
-上限 `max_tiles`，預設 16、最多 64），libvlc 只有 `performance.py` 這一組調校。
+固定上限 36，`models.TILES_LIMIT`），libvlc 只有 `performance.py` 這一組調校。
 
 省 CPU 的手段，依實際效果排序：
 

@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 222 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 227 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **222 passed**（2026-10-19，分支 `refactor/ui-redesign`，`.venv/Scripts/python -m pytest -q`） |
+| 測試 | **227 passed**（2026-10-19，分支 `refactor/ui-redesign`，`.venv/Scripts/python -m pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -43,6 +43,18 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 **狀態：已實作、已驗證，依功能分批 commit 在 `refactor/ui-redesign`（從 `main` 開出），尚未合併、未 push。**
 下一步：使用者確認後合併回 `main`；之後可考慮讓工具列 `AI` 按鈕常駐（入口目前只在地點右鍵）。
+navbar（選單列）已提出分流建議但使用者暫不實作。
+
+第二輪微調（使用者試用後回饋，227 passed）：
+- 方向鍵：清單上下鍵原本就會切換，但移回同地點的地點列時放大的攝影機不會還原；另外 `currentItemChanged`
+  在「再點一次已選取的列」時不會觸發，所以「再點同一台還原」實際上點不動。改為選到目前地點就還原，
+  並在 `_SiteTree.mouseReleaseEvent`（同一列按下又放開，避免拖曳誤觸）補報重複點擊。
+- 每頁格數上限設定移除，固定 `TILES_LIMIT = 36`；舊檔 `max_tiles` 忽略。設定視窗只剩清單＋表單。
+- 格數欄位：無上下箭頭、前綴 `▦`、固定寬 64px。CPU 只顯示全機佔比，核心數與播放器數放在滑鼠提示。
+- 開啟時 16:9：第一次顯示後量測一格影像大小，用 `layout.fit_window_to_video` 反推視窗大小（只調高度；
+  超出螢幕或低於最小高度 600 時固定高度改調寬度）。分隔欄改為只讓影像牆吸收寬度變化，否則加寬時
+  多出的寬度會被側欄分走、比例對不上。實測 4／6／9 格開窗後每格 1.774–1.778。
+- 另修：側欄清單下方多了一個 stretch，清單只用半個側欄高度，攝影機多時被截斷。
 
 使用者逐項檢視功能清單後的決定與實作：
 
@@ -305,7 +317,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **222 passed**。
+2. `uv run --group dev pytest -q` → 應為 **227 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。
