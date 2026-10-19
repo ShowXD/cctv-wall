@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         self._restore_geometry(workspace.geometry)
         self._build_ui()
         self._grips = FramelessGrips(self)
+        self._fitted_to_video = False
         self._apply_view_mode()
         self._reload_sites()
         self._resource_timer = QTimer(self)
@@ -120,6 +121,10 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._monitor_panel())
         splitter.addWidget(self._ai_panel)
         splitter.setSizes([self._workspace.sidebar_width, 1180, 300])
+        # A wider or narrower window changes the wall only; the side panels keep their width.
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 0)
         self._splitter = splitter
         self.setCentralWidget(splitter)
 
@@ -193,6 +198,32 @@ class MainWindow(QMainWindow):
             return
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, frameless)
         self.show()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._fitted_to_video:
+            self._fitted_to_video = True
+            # The grid has its real size only after this first show has been laid out.
+            QTimer.singleShot(0, self._fit_to_video)
+
+    def _fit_to_video(self) -> None:
+        """Only at opening: size the window so each tile is 16:9; later resizes are the operator's."""
+        surface = self._wall.video_surface_size()
+        if surface is None or self.isMaximized() or self.isFullScreen():
+            return
+        available = self.screen().availableGeometry()
+        frame_w = self.frameGeometry().width() - self.width()
+        frame_h = self.frameGeometry().height() - self.height()
+        width, height = layout.fit_window_to_video(
+            (self.width(), self.height()), surface, layout.grid_shape(self._wall.tile_count),
+            (self.minimumWidth(), self.minimumHeight()),
+            (available.width() - frame_w, available.height() - frame_h))
+        self.resize(width, height)
+        # A taller window may now run off the screen; pull it back without moving it otherwise.
+        frame = self.frameGeometry()
+        x = min(frame.left(), available.right() - frame.width() + 1)
+        y = min(frame.top(), available.bottom() - frame.height() + 1)
+        self.move(max(x, available.left()), max(y, available.top()))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

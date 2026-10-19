@@ -13,6 +13,31 @@ RTSP_URL = "rtsp://10.0.0.5:554/stream1"
 HLS_URL = "https://example.test/live.m3u8"
 
 
+MIN = (960, 600)
+
+
+class TestFitToVideo:
+    def test_only_the_height_changes_when_it_fits(self):
+        # 2x2 grid, each surface 480x400 -> needs 270 high: 130 less per row.
+        assert layout.fit_window_to_video((1200, 900), (480, 400), (2, 2), MIN, (1920, 1040)) == (1200, 640)
+
+    def test_a_short_window_grows(self):
+        assert layout.fit_window_to_video((1200, 500), (480, 200), (2, 2), MIN, (1920, 1040)) == (1200, 640)
+
+    def test_too_tall_means_full_height_and_a_narrower_window(self):
+        # 1 tile 1600x500 needs 900 high -> window 1000 > 800. At 800 the surface gets 200 more
+        # (700 high), so 16:9 wants it 1244 wide: the window narrows by 356.
+        assert layout.fit_window_to_video((1800, 600), (1600, 500), (1, 1), MIN, (1920, 800)) == (1444, 800)
+
+    def test_below_the_minimum_height_the_window_widens_instead(self):
+        # 2x3 grid, 370x261 surfaces at 1400x600: 16:9 wants them 208 high -> window 474 < 600.
+        # Held at 600, the surfaces stay 261 high, so 16:9 wants them 464 wide: +94 per column (rounded).
+        assert layout.fit_window_to_video((1400, 600), (370, 261), (2, 3), MIN, (1920, 1040)) == (1682, 600)
+
+    def test_nothing_on_screen_changes_nothing(self):
+        assert layout.fit_window_to_video((1200, 800), (0, 0), (0, 0), MIN, (1920, 1040)) == (1200, 800)
+
+
 class TestGrid:
     @pytest.mark.parametrize("count,shape", [
         (0, (0, 0)), (1, (1, 1)), (2, (1, 2)), (4, (2, 2)),

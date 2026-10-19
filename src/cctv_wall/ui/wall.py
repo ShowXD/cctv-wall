@@ -264,6 +264,17 @@ class WallView(QWidget):
         return sum(tile.player is not None and tile.player.state() == PlaybackState.PLAYING
                    for tile in displayed)
 
+    def video_surface_size(self) -> tuple[int, int] | None:
+        """Size of one video area on the grid, or None when no tile is shown."""
+        if not self._tiles or self._focused_tile is not None:
+            return None
+        surface = self._tiles[0].view.surface
+        return surface.width(), surface.height()
+
+    @property
+    def tile_count(self) -> int:
+        return len(self._tiles)
+
     @property
     def allocated_player_count(self) -> int:
         """Players already created for the visible page; queued tiles are not connected yet."""
