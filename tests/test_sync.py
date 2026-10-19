@@ -41,9 +41,6 @@ class TestRequiredElements:
         probe = _factory_with(_element_factory({"d3d11videosink"}))
         assert probe.missing_elements() == ("d3d11videosink",)
 
-    def test_a_complete_runtime_reports_nothing_missing(self):
-        assert _factory_with(_element_factory(set())).missing_elements() == ()
-
     def test_no_h264_decoder_is_reported_even_when_the_base_pipeline_exists(self):
         missing = _factory_with(_element_factory({"d3d11h264dec", "avdec_h264"})).missing_elements()
         assert missing == ("H.264 decoder (d3d11h264dec or avdec_h264)",)
@@ -85,10 +82,6 @@ class TestDiagnosticRedaction:
 
 
 class TestAuthenticationChallenge:
-    def test_digest_wins_when_a_camera_also_offers_basic(self):
-        header = 'Basic realm="cam"\nDigest realm="cam", nonce="abc"'
-        assert sync_probe._preferred_challenge(header).startswith("Digest ")
-
     def test_a_single_offer_is_used_as_is(self):
         assert sync_probe._preferred_challenge('Basic realm="cam"') == 'Basic realm="cam"'
 

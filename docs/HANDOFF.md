@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 232 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 190 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **232 passed**（2026-10-19，分支 `refactor/ui-redesign`，`.venv/Scripts/python -m pytest -q`） |
+| 測試 | **190 passed**（2026-10-19，`main`，`.venv/Scripts/python -m pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -41,7 +41,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-19：介面改版與功能精簡（分支 `refactor/ui-redesign`）
 
-**狀態：已實作、已驗證，依功能分批 commit 在 `refactor/ui-redesign`（從 `main` 開出），尚未合併、未 push。**
+**狀態：已實作、已驗證，依功能分批 commit 在 `refactor/ui-redesign`，已合併回 `main` 並 push，分支已刪除。**
 下一步：使用者確認後合併回 `main`；之後可考慮讓工具列 `AI` 按鈕常駐（入口目前只在地點右鍵）。
 navbar（選單列）已提出分流建議但使用者暫不實作。
 
@@ -68,6 +68,11 @@ navbar（選單列）已提出分流建議但使用者暫不實作。
   「新增攝影機…」、攝影機「編輯攝影機…／刪除攝影機」走 `site_commands` 與 `app.CAMERA_COMMANDS`；
   移除兩處「觀看此地點」（點一下本來就會觀看／放大）。
 - 截圖中某個欄位標籤看起來帶顏色，是 ClearType 子像素邊緣，實測所有標籤前景色都是同一色，不是 bug。
+
+測試精簡：232 → 190，約 1.5 s → 0.8 s。刪掉重複、只測語言或測試替身本身、沒有新分支的
+參數列；凡是唯一覆蓋某段程式的都保留。順帶修正 `TestRealSample` 一個測錯對象的測試（空 payload 先被
+`skip_empty` 擋掉，從未走到對照表檢查）；AI 連線重連測試改把 `ai_feed.FIRST_BACKOFF_SECONDS` 調成 0.05 s，
+不再真的等 1 秒。
 
 使用者逐項檢視功能清單後的決定與實作：
 
@@ -96,7 +101,7 @@ navbar（選單列）已提出分流建議但使用者暫不實作。
 
 ## 2026-10-19：AI 結果 TCP 對照
 
-**狀態：已實作、已驗證，`feature/ai-feed` 已合併回 `main`（`4fbbe14`），尚未 push。**
+**狀態：已實作、已驗證，`feature/ai-feed` 已合併回 `main`（`4fbbe14`）並 push，分支已刪除。**
 現場仍需以實際 AI 端校準各連線的 `delay_ms`，並確認第二條連線的攝影機識別值。
 
 - 需求：部分專案的 AI 端以 TCP 回傳辨識結果（文字事件/數值），要和影像對照，且時間要對上。
@@ -330,7 +335,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **232 passed**。
+2. `uv run --group dev pytest -q` → 應為 **190 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

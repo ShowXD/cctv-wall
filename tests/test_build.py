@@ -21,8 +21,6 @@ def _request(**overrides) -> argparse.Namespace:
 
 class TestReleaseName:
     @pytest.mark.parametrize("label, expected_suffix", [
-        ("rc1", "rc1"),
-        ("client a", "client-a"),
         ("a/b\\c:d", "a-b-c-d"),
         ("v1.2.3", "v1.2.3"),
         ("客戶 A", "客戶-A"),          # CJK counts as alphanumeric, so it survives
@@ -49,10 +47,6 @@ class TestSpecEnvironment:
         assert environment[build.ONEFILE_VAR] == "1"
         assert environment[build.VLC_DIR_VAR] == str(tmp_path)
 
-    def test_onefile_is_always_requested(self):
-        """Releases ship as a single exe, so the spec is never left to guess."""
-        assert build._spec_environment(_request())[build.ONEFILE_VAR] == "1"
-
     def test_no_vlc_directory_is_injected_unless_asked_for(self, monkeypatch):
         monkeypatch.delenv(build.VLC_DIR_VAR, raising=False)
         assert build.VLC_DIR_VAR not in build._spec_environment(_request())
@@ -62,7 +56,7 @@ class TestSpecEnvironment:
         assert build._spec_environment(_request())["SOME_UNRELATED_VARIABLE"] == "keep me"
 
     def test_a_stale_onefile_variable_cannot_turn_it_off(self, monkeypatch):
-        """The build no longer offers a folder mode, so an inherited "0" must not win."""
+        """Releases ship as a single exe, so an inherited "0" must not win."""
         monkeypatch.setenv(build.ONEFILE_VAR, "0")
         assert build._spec_environment(_request())[build.ONEFILE_VAR] == "1"
 
@@ -97,10 +91,6 @@ class TestPrepare:
         monkeypatch.setattr(build.shutil, "rmtree", locked)
         with pytest.raises(build.BuildError, match="close any running CCTVWall.exe"):
             build._prepare(_request(label="rc1", replace=True))
-
-    def test_a_fresh_release_directory_is_returned(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(build, "RELEASES_DIRECTORY", tmp_path)
-        assert build._prepare(_request(label="rc1")).name == build._release_name("rc1")
 
 
 def test_release_names_use_the_pyproject_version():

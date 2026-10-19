@@ -234,7 +234,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
 ### 換機器 / 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **232 passed**。
+2. `uv run --group dev pytest -q` → 應為 **190 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

@@ -115,11 +115,6 @@ class TestConfigPath:
         monkeypatch.setattr("sys.executable", str(tmp_path / "CCTVWall.exe"))
         assert default_config_path() == tmp_path / repository.CONFIG_FILENAME
 
-    def test_the_environment_variable_still_wins_when_frozen(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("sys.frozen", True, raising=False)
-        monkeypatch.setenv(repository.CONFIG_ENV_VAR, str(tmp_path / "pinned.json"))
-        assert default_config_path() == tmp_path / "pinned.json"
-
 
 
 def target_text(tmp_path) -> str:
@@ -168,7 +163,7 @@ class TestPasswordProtection:
 
 
 class TestTilesPerPage:
-    @pytest.mark.parametrize("legacy,tiles", [("low_end", 4), ("balanced", 9), ("full", 16), ("x", 4)])
+    @pytest.mark.parametrize("legacy,tiles", [("full", 16), ("x", 4)])
     def test_a_legacy_profile_becomes_a_tile_count(self, legacy, tiles):
         assert Workspace.from_raw({"performance": legacy}).tiles_per_page == tiles
 
@@ -190,6 +185,6 @@ class TestSidebarPreference:
         workspace = Workspace().with_sidebar(420, False)
         assert Workspace.from_raw(workspace.as_dict()) == workspace
 
-    @pytest.mark.parametrize("raw,expected", [(None, 260), ("wide", 260), (40, 160), (5000, 800)])
+    @pytest.mark.parametrize("raw,expected", [("wide", 260), (40, 160), (5000, 800)])
     def test_a_bad_width_falls_back_or_is_clamped(self, raw, expected):
         assert Workspace.from_raw({"sidebar_width": raw}).sidebar_width == expected

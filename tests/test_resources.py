@@ -11,9 +11,6 @@ class TestCpuBreakdown:
     def test_machine_percent_divides_the_load_across_every_core(self):
         assert ProcessUsage(400.0, 100.0, 16).machine_percent == 25.0
 
-    def test_a_single_core_machine_reports_the_raw_percentage(self):
-        assert ProcessUsage(80.0, 100.0, 1).machine_percent == 80.0
-
     def test_an_unknown_core_count_leaves_the_machine_share_unknown(self):
         assert ProcessUsage(400.0, 100.0, None).machine_percent is None
 

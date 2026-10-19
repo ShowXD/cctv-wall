@@ -56,7 +56,7 @@ class TestCatalog:
     def test_the_dynamic_keys_really_are_defined(self):
         assert DYNAMIC_KEYS <= set(_MESSAGES["en"])
 
-    @pytest.mark.parametrize("language", sorted(SUPPORTED_LANGUAGES))
+    @pytest.mark.parametrize("language", sorted(SUPPORTED_LANGUAGES - {"en"}))
     def test_placeholders_match_between_languages(self, language):
         """A translation that drops `{count}` would fail at runtime, not here."""
         for key, english in _MESSAGES["en"].items():
