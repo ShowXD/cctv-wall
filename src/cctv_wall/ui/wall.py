@@ -155,7 +155,7 @@ class VideoTile(QFrame):
             self._on_solo(self.camera)
 
     def _show_stream_menu(self, event: QContextMenuEvent) -> None:
-        menu = QMenu(self)
+        menu = QMenu(self.window())   # see SiteNavigation._show_context_menu
         menu.setTitle(self.camera.label)
         # Only a URL that names its stream (".../stream2", "?stream=2") can be switched;
         # guessing a vendor's URL format would break the camera instead.
@@ -169,6 +169,7 @@ class VideoTile(QFrame):
             action.triggered.connect(lambda _checked=False, value=stream: self._choose_stream(value))
             menu.addAction(action)
         menu.exec(event.globalPos())
+        menu.deleteLater()
 
     def _choose_stream(self, stream: int) -> None:
         if (self._on_stream_change is not None
