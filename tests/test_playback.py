@@ -1,4 +1,4 @@
-"""Layout, performance options and resolvers — the behaviour behind the picture."""
+"""Layout and playback options — the behaviour behind the picture."""
 from __future__ import annotations
 
 import os
@@ -8,12 +8,9 @@ import pytest
 from cctv_wall import layout, vlc_runtime
 from cctv_wall.performance import INSTANCE_ARGS, media_options_for
 from cctv_wall.player import NullPlayerFactory
-from cctv_wall.resolvers import (PassthroughResolver, ResolveError, ResolverChain,
-                                 YouTubeResolver)
 
 RTSP_URL = "rtsp://10.0.0.5:554/stream1"
 HLS_URL = "https://example.test/live.m3u8"
-YOUTUBE_URL = "https://www.youtube.com/watch?v=abc"
 
 
 class TestGrid:
@@ -76,70 +73,6 @@ class TestPlaybackOptions:
 
     def test_shared_stream_tuning_is_carried_through(self):
         assert ":clock-jitter=0" in media_options_for(RTSP_URL, "auto")
-
-
-class StubResolver:
-    """Claims one exact URL, so chain ordering can be observed."""
-
-    def __init__(self, url: str, result: str) -> None:
-        self._url = url
-        self._result = result
-        self.calls = 0
-
-    def handles(self, url: str) -> bool:
-        return url == self._url
-
-    def resolve(self, url: str, quality: str) -> str:
-        self.calls += 1
-        return self._result
-
-
-class TestResolvers:
-    def test_passthrough_returns_the_url_untouched(self):
-        assert PassthroughResolver().resolve(RTSP_URL, "720p") == RTSP_URL
-
-    def test_youtube_resolver_only_claims_youtube(self):
-        resolver = YouTubeResolver()
-        assert resolver.handles(YOUTUBE_URL)
-        assert not resolver.handles(RTSP_URL)
-
-    def test_youtube_format_caps_the_height(self):
-        assert "[height<=720]" in YouTubeResolver._format("720p")
-
-    def test_youtube_format_without_a_cap_asks_for_best(self):
-        assert YouTubeResolver._format("auto") == "best[protocol^=http]/best/best"
-
-    def test_an_unrunnable_executable_is_reported_clearly(self, tmp_path):
-        missing = tmp_path / "not-really-yt-dlp.exe"
-        with pytest.raises(ResolveError, match="could not run yt-dlp"):
-            YouTubeResolver(executable=str(missing)).resolve(YOUTUBE_URL, "auto")
-
-    def test_without_a_cli_it_falls_back_to_the_library(self, monkeypatch):
-        """A frozen exe has no yt-dlp on PATH, only the importable module."""
-        monkeypatch.setattr("shutil.which", lambda _name: None)
-        calls = []
-        monkeypatch.setattr(YouTubeResolver, "_resolve_with_library",
-                            lambda self, url, quality: calls.append((url, quality)) or "stream")
-        assert YouTubeResolver().resolve(YOUTUBE_URL, "720p") == "stream"
-        assert calls == [(YOUTUBE_URL, "720p")]
-
-    def test_the_first_matching_resolver_wins(self):
-        first = StubResolver(RTSP_URL, "first")
-        second = StubResolver(RTSP_URL, "second")
-        assert ResolverChain((first, second)).resolve(RTSP_URL, "auto") == "first"
-        assert second.calls == 0
-
-    def test_passthrough_last_handles_everything_else(self):
-        chain = ResolverChain((StubResolver(YOUTUBE_URL, "yt"), PassthroughResolver()))
-        assert chain.resolve(HLS_URL, "auto") == HLS_URL
-
-    def test_an_unhandled_url_is_an_error(self):
-        with pytest.raises(ResolveError, match="no resolver"):
-            ResolverChain((StubResolver(YOUTUBE_URL, "yt"),)).resolve(RTSP_URL, "auto")
-
-    def test_an_empty_chain_is_rejected(self):
-        with pytest.raises(ValueError, match="at least one"):
-            ResolverChain(())
 
 
 class TestBundledVlc:

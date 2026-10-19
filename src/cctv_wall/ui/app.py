@@ -18,7 +18,6 @@ from cctv_wall.event_log import logger
 from cctv_wall.i18n import LANGUAGE_LABELS, Translator
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.player import PlaybackError, PlayerFactory
-from cctv_wall.resolvers import StreamResolver
 from cctv_wall.resources import ProcessUsage, ResourceMonitor
 from cctv_wall.ui import site_commands
 from cctv_wall.ui.ai_panel import AiEventPanel
@@ -46,10 +45,9 @@ class MainWindow(QMainWindow):
     """Coordinates navigation, persistence, and player lifecycle without drawing video itself."""
 
     def __init__(self, workspace: Workspace, build_factory: FactoryBuilder,
-                 resolver: StreamResolver, save: WorkspaceSaver) -> None:
+                 save: WorkspaceSaver) -> None:
         super().__init__()
         self._workspace = workspace
-        self._resolver = resolver
         self._save = save
         self._page = 0
         self._active_site_name = workspace.active_site.name if workspace.active_site else ""
@@ -133,7 +131,7 @@ class MainWindow(QMainWindow):
         layout_box.setSpacing(0)
         self._control_bar_widget = self._control_bar()
         layout_box.addWidget(self._control_bar_widget)
-        self._wall = WallView(self._factory, self._resolver, self._workspace.tiles_per_page,
+        self._wall = WallView(self._factory, self._workspace.tiles_per_page,
                               on_solo=self._toggle_camera_focus,
                               on_health_change=self._refresh_status,
                               translator=self._translator,

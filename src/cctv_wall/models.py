@@ -74,10 +74,10 @@ def _flag(value: Any) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Camera:
-    """一個影像來源：RTSP 攝影機、本機檔案，或網路／YouTube 連結。"""
+    """一個影像來源：RTSP 攝影機、本機檔案或網路串流。"""
 
     name: str = ""
-    url: str = ""            # 檔案與 YouTube 用；有值時蓋掉 RTSP 欄位
+    url: str = ""            # 直接網址或檔案；有值時蓋掉 RTSP 欄位
     host: str = ""
     port: int = DEFAULT_PORT
     user: str = ""

@@ -1,13 +1,12 @@
 [project]
 name = "cctv-wall"
 version = "0.4.0"
-description = "Multi-site video wall for RTSP cameras, local files and YouTube"
+description = "Multi-site video wall for RTSP cameras and local files"
 requires-python = ">=3.11"
 dependencies = [
     # Qt Core, Gui and Widgets without the large optional Qt Addons bundle.
     "pyside6-essentials>=6.8",
     "python-vlc>=3.0.20",
-    "yt-dlp>=2024.1.1",
 ]
 
 [project.optional-dependencies]

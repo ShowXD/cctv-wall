@@ -15,7 +15,6 @@ from cctv_wall.i18n import Translator
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
 from cctv_wall.performance import media_options_for
 from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
-from cctv_wall.resolvers import ResolveError, StreamResolver
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
 # Starting four RTSP sessions in the same event-loop turn can overwhelm a weak PC or a
@@ -207,14 +206,13 @@ def _due_for_retry(tile: _Tile) -> bool:
 class WallView(QWidget):
     """Renders one page, preserving the low-memory one-player-per-visible-tile rule."""
 
-    def __init__(self, factory: PlayerFactory, resolver: StreamResolver,
+    def __init__(self, factory: PlayerFactory,
                  tiles_per_page: int, on_solo: Callable[[Camera], None] | None = None,
                  on_health_change: Callable[[], None] | None = None,
                  translator: Translator | None = None,
                  on_stream_change: Callable[[Camera, int], None] | None = None) -> None:
         super().__init__()
         self._factory = factory
-        self._resolver = resolver
         self._tiles_per_page = tiles_per_page
         self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
         self._on_solo = on_solo
@@ -441,7 +439,7 @@ class WallView(QWidget):
         try:
             camera = tile.view.camera
             logger().info("connecting camera=%s", tile.log_label)
-            url = self._resolver.resolve(build_url(camera), camera.quality)
+            url = build_url(camera)
             player = self._factory.create()
             player.play(url, media_options_for(url, camera.quality),
                         int(tile.view.surface.winId()))
@@ -450,7 +448,7 @@ class WallView(QWidget):
             self._log_state_change(tile, state)
             if state == PlaybackState.PLAYING:
                 tile.view.set_playing()
-        except (ResolveError, PlaybackError, ValueError, OSError) as error:
+        except (PlaybackError, ValueError, OSError) as error:
             if player is not None:
                 try:
                     player.release()

@@ -8,7 +8,7 @@ import pytest
 from cctv_wall import quality, vendors
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, display_url,
-                           is_youtube, redact, stream_from_direct_url)
+                           redact, stream_from_direct_url)
 
 
 def camera(**overrides) -> Camera:
@@ -132,20 +132,6 @@ class TestBuildUrl:
     def test_display_url_masks_a_password_embedded_in_a_direct_url(self):
         shown = display_url(Camera(url="rtsp://admin:p%40ss@10.0.0.5:554/stream1"))
         assert shown == "rtsp://admin:****@10.0.0.5:554/stream1"
-
-
-class TestIsYouTube:
-    @pytest.mark.parametrize("url", ["https://www.youtube.com/watch?v=x",
-                                     "https://youtu.be/x",
-                                     "https://m.youtube.com/watch?v=x"])
-    def test_youtube_hosts_are_detected(self, url):
-        assert is_youtube(url)
-
-    @pytest.mark.parametrize("url", ["rtsp://10.0.0.5:554/stream1",
-                                     "C:/videos/clip.mp4",
-                                     "https://evil.example/youtube.com/watch?v=x"])
-    def test_other_urls_are_not_youtube(self, url):
-        assert not is_youtube(url)
 
 
 class TestSiteAndWorkspace:

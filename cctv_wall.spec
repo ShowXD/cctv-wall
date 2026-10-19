@@ -11,7 +11,6 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
 
 APP_NAME = "CCTVWall"
 PROJECT_ROOT = Path(SPECPATH)
@@ -147,15 +146,12 @@ print("[cctv-wall] GStreamer strict-sync bundling: "
       + (f"{len(gstreamer_binaries)} files" if gstreamer_binaries else "DISABLED"),
       file=sys.stderr)
 
-# yt-dlp imports its extractors lazily; collect_all keeps them reachable.
-yt_datas, yt_binaries, yt_hiddenimports = collect_all("yt_dlp")
-
 analysis = Analysis(
     [str(PROJECT_ROOT / "src" / "cctv_wall" / "__main__.py")],
     pathex=[str(PROJECT_ROOT / "src")],
-    binaries=vlc_binaries + gstreamer_binaries + yt_binaries,
-    datas=vlc_datas + gstreamer_datas + yt_datas,
-    hiddenimports=["vlc"] + yt_hiddenimports,
+    binaries=vlc_binaries + gstreamer_binaries,
+    datas=vlc_datas + gstreamer_datas,
+    hiddenimports=["vlc"],
     hookspath=[],
     runtime_hooks=[],
     # Nothing here draws plots or crunches arrays; excluding these keeps the build small.

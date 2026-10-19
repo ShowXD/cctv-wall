@@ -7,22 +7,16 @@ validation, and separate from the GUI so it stays testable as a plain function.
 from __future__ import annotations
 
 import re
-from urllib.parse import quote, urlparse, urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from cctv_wall import vendors
 from cctv_wall.models import Camera
 
 RTSP_SCHEME = "rtsp"
-YOUTUBE_HOSTS = frozenset({"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"})
 MASK = "****"
 _STREAM_PATH_TOKEN = re.compile(r"(?i)(stream)([1-4])")
 _STREAM_QUERY_TOKEN = re.compile(r"(?i)([?&]stream=)([1-4])")
 _URL_CREDENTIALS = re.compile(r"(?i)([a-z][a-z0-9+.-]*)://[^@/\s]*@")
-
-
-def is_youtube(url: str) -> bool:
-    """True only when the host itself is YouTube — not when it merely appears in the path."""
-    return urlparse(url).hostname in YOUTUBE_HOSTS
 
 
 def build_url(camera: Camera) -> str:

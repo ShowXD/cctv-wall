@@ -64,16 +64,6 @@ def _check(bundled: Path | None) -> int:
         lines.append(VLC_HINT)
         status = 2
     try:
-        # Import exactly what resolvers.py needs, so a pass here really means YouTube works.
-        from yt_dlp import YoutubeDL, version as yt_version  # noqa: F401
-
-        lines.append(f"yt-dlp      : {yt_version.__version__}")
-    except Exception as e:
-        # A diagnostic must report rather than crash, and yt-dlp drags in a long tail of
-        # optional dependencies — so name the actual failure instead of guessing at it.
-        lines.append(f"yt-dlp      : UNAVAILABLE — {type(e).__name__}: {e}")
-        lines.append("              only YouTube sources are affected; RTSP and files still work")
-    try:
         # Build exactly what the sync button builds. The GI runtime loads inside this
         # constructor, so a pass here means pressing the button will really work.
         from cctv_wall.gst_sync import GStreamerSyncPlayerFactory
@@ -88,7 +78,7 @@ def _check(bundled: Path | None) -> int:
         else:
             lines.append("strict sync : available")
     except Exception as e:
-        # Same reasoning as yt-dlp: a diagnostic names the failure instead of crashing.
+        # A diagnostic names the failure instead of crashing.
         lines.append(f"strict sync : UNAVAILABLE — {type(e).__name__}: {e}")
         lines.append("              the wall still plays; only NTP timestamp sync is off")
     message = "\n".join(lines)
@@ -158,14 +148,13 @@ def main(argv: list[str] | None = None) -> int:
     startup.set_progress(45, "正在準備播放環境…")
     startup.set_progress(65, "正在載入監看介面…")
     try:
-        # These imports pull in VLC, yt-dlp and the complete widget tree.  Delaying
+        # These imports pull in VLC and the complete widget tree.  Delaying
         # them until after StartupProgress is visible makes slow PCs acknowledge a
         # launch immediately rather than presenting an unresponsive desktop.
-        from cctv_wall.resolvers import default_resolver
         from cctv_wall.ui.app import MainWindow
 
         startup.set_progress(80, "正在建立影像牆…")
-        window = MainWindow(workspace, _factory_builder(dry_run), default_resolver(), save_workspace)
+        window = MainWindow(workspace, _factory_builder(dry_run), save_workspace)
     except Exception as e:  # a failure here would leave a dead window: say why, then stop
         startup.dismiss()
         application.quit()
