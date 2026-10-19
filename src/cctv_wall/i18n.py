@@ -9,7 +9,7 @@ LANGUAGE_LABELS = {"zh_TW": "繁體中文", "en": "English"}
 
 _MESSAGES: dict[str, dict[str, str]] = {
     "en": {
-        "app_title": "CCTV Wall", "toggle_sidebar": "Show or hide the site list (Ctrl+B)", "save_camera": "Save", "tiles_per_page": "Tiles per page", "tiles_suffix": " tiles", "sites": "SITES",
+        "app_title": "CCTV Wall", "toggle_sidebar": "Show or hide the site list (Ctrl+B)", "save_camera": "Save", "tiles_per_page": "Tiles per page — type a number, scroll, or use the arrow keys", "sites": "SITES",
         "manage": "Manage setup",         "no_site": "No site selected", "cameras": "{count} cameras configured", "camera": "{count} camera configured",
         "live": "●  {live}/{total} LIVE", "page": "Page {current} of {total}",
         "previous": "Previous page", "next": "Next page",         "reload_tip": "Reconnect visible cameras",         "no_cameras": "No cameras here yet", "add_camera_hint": "Open Settings to add a camera to this site.",
@@ -51,7 +51,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "move_up": "Move up", "move_down": "Move down",
     },
     "zh_TW": {
-        "app_title": "CCTV 影像牆", "toggle_sidebar": "顯示或隱藏地點清單（Ctrl+B）", "save_camera": "儲存", "tiles_per_page": "每頁格數", "tiles_suffix": " 格", "sites": "監看地點", "manage": "管理設定",
+        "app_title": "CCTV 影像牆", "toggle_sidebar": "顯示或隱藏地點清單（Ctrl+B）", "save_camera": "儲存", "tiles_per_page": "每頁格數：可直接輸入、滾動滑鼠滾輪或按方向鍵", "sites": "監看地點", "manage": "管理設定",
         "no_site": "尚未選擇地點", "cameras": "已設定 {count} 支攝影機", "camera": "已設定 {count} 支攝影機",
         "live": "●  {live}/{total} 路播放中", "page": "第 {current} / {total} 頁", "previous": "上一頁", "next": "下一頁",
         "reload_tip": "重新連線目前可見的攝影機",

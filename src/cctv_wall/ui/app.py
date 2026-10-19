@@ -227,7 +227,12 @@ class MainWindow(QMainWindow):
         self._tiles_box = QSpinBox()
         self._tiles_box.setObjectName("tilesBox")
         self._tiles_box.setToolTip(self._translator.t("tiles_per_page"))
-        self._tiles_box.setSuffix(self._translator.t("tiles_suffix"))
+        # A number is all this needs: typing, the wheel and the arrow keys all change it,
+        # so the spin buttons and the unit only cost toolbar width.
+        self._tiles_box.setPrefix("▦ ")
+        self._tiles_box.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        self._tiles_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._tiles_box.setFixedWidth(64)
         self._tiles_box.setRange(1, TILES_LIMIT)
         self._tiles_box.setValue(self._workspace.tiles_per_page)
         # Typing "12" must not first reconnect a 1-tile page: apply on Enter, focus-out or arrows.

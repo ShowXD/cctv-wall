@@ -24,7 +24,7 @@ QLabel#resourceStatus { color: #8fa0b7; font-size: 9pt; }
 QLabel#liveBadge { color: #78dfad; background: #173a32; border: 1px solid #256047; border-radius: 10px; padding: 4px 9px; font-size: 9pt; font-weight: 700; }
 QFrame#controlBar { background: #151c28; border-bottom: 1px solid #202a38; }
 QLabel#pageLabel { color: #d7e0eb; min-width: 80px; font-weight: 600; }
-QSpinBox#tilesBox { min-width: 110px; }
+QSpinBox#tilesBox { padding: 7px 4px; font-weight: 600; }
 QComboBox#languageBox { min-width: 100px; }
 
 QFrame#videoTile { background: #090d14; border: 1px solid #263449; border-radius: 5px; }
@@ -91,7 +91,7 @@ QLabel#resourceStatus { color: #64758c; font-size: 9pt; }
 QLabel#liveBadge { color: #14733e; background: #e2f5e9; border: 1px solid #a9d9b8; border-radius: 10px; padding: 4px 9px; font-size: 9pt; font-weight: 700; }
 QFrame#controlBar { background: #ffffff; border-bottom: 1px solid #dbe3ed; }
 QLabel#pageLabel { color: #354962; min-width: 80px; font-weight: 600; }
-QSpinBox#tilesBox { min-width: 110px; }
+QSpinBox#tilesBox { padding: 7px 4px; font-weight: 600; }
 QComboBox#languageBox { min-width: 100px; }
 QFrame#videoTile { background: #ffffff; border: 1px solid #bdcad9; border-radius: 5px; }
 QFrame#videoTile:hover { border-color: #3c85bd; }
