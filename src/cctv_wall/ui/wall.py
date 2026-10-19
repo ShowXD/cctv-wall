@@ -13,7 +13,7 @@ from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
-from cctv_wall.performance import PerformanceProfile, media_options_for
+from cctv_wall.performance import media_options_for
 from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
 from cctv_wall.resolvers import ResolveError, StreamResolver
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
@@ -37,13 +37,13 @@ DEAD_STATES = frozenset({PlaybackState.ERROR, PlaybackState.ENDED, PlaybackState
 MAX_RECONNECT_BACKOFF_TICKS = 6
 
 
-def _connection_start_interval(factory: PlayerFactory, profile: PerformanceProfile) -> int:
+def _connection_start_interval(factory: PlayerFactory, tiles_per_page: int) -> int:
     """Space normal RTSP connections without delaying the shared-clock backend."""
     if getattr(factory, "synchronized", False):
         return 0
-    if profile.tiles_per_page <= 4:
+    if tiles_per_page <= 4:
         return 650
-    if profile.tiles_per_page <= 9:
+    if tiles_per_page <= 9:
         return 350
     return 175
 
@@ -208,15 +208,15 @@ class WallView(QWidget):
     """Renders one page, preserving the low-memory one-player-per-visible-tile rule."""
 
     def __init__(self, factory: PlayerFactory, resolver: StreamResolver,
-                 profile: PerformanceProfile, on_solo: Callable[[Camera], None] | None = None,
+                 tiles_per_page: int, on_solo: Callable[[Camera], None] | None = None,
                  on_health_change: Callable[[], None] | None = None,
                  translator: Translator | None = None,
                  on_stream_change: Callable[[Camera, int], None] | None = None) -> None:
         super().__init__()
         self._factory = factory
         self._resolver = resolver
-        self._profile = profile
-        self._start_interval_ms = _connection_start_interval(factory, profile)
+        self._tiles_per_page = tiles_per_page
+        self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
         self._on_solo = on_solo
         self._on_health_change = on_health_change
         self._translator = translator or Translator()
@@ -245,15 +245,15 @@ class WallView(QWidget):
 
     @property
     def tiles_per_page(self) -> int:
-        return self._profile.tiles_per_page
+        return self._tiles_per_page
 
-    def set_profile(self, profile: PerformanceProfile, factory: PlayerFactory) -> None:
-        """Swap tuning and backend together, only while stopped."""
+    def configure(self, factory: PlayerFactory, tiles_per_page: int) -> None:
+        """Swap backend and page size together, only while stopped."""
         if self._tiles:
             raise RuntimeError("cannot replace playback backend while tiles are active")
-        self._profile = profile
         self._factory = factory
-        self._start_interval_ms = _connection_start_interval(factory, profile)
+        self._tiles_per_page = tiles_per_page
+        self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
 
     def page_count(self, camera_count: int) -> int:
         return layout.page_count(camera_count, self.tiles_per_page)
@@ -443,7 +443,7 @@ class WallView(QWidget):
             logger().info("connecting camera=%s", tile.log_label)
             url = self._resolver.resolve(build_url(camera), camera.quality)
             player = self._factory.create()
-            player.play(url, media_options_for(url, camera.quality, self._profile),
+            player.play(url, media_options_for(url, camera.quality),
                         int(tile.view.surface.winId()))
             tile.player = player
             state = player.state()

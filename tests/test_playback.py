@@ -6,8 +6,7 @@ import os
 import pytest
 
 from cctv_wall import layout, vlc_runtime
-from cctv_wall.performance import (BALANCED, FULL, LOW_END, PerformanceProfile,
-                                  media_options_for, profile_for)
+from cctv_wall.performance import INSTANCE_ARGS, media_options_for
 from cctv_wall.player import NullPlayerFactory
 from cctv_wall.resolvers import (PassthroughResolver, ResolveError, ResolverChain,
                                  YouTubeResolver)
@@ -59,41 +58,24 @@ class TestPaging:
             layout.page_count(1, per_page)
 
 
-class TestPerformanceProfiles:
-    def test_low_end_is_the_default_and_the_fallback(self):
-        assert profile_for("nonsense") is LOW_END
-        assert profile_for("balanced") is BALANCED
-
-    def test_tile_budget_grows_with_the_profile(self):
-        assert LOW_END.tiles_per_page < BALANCED.tiles_per_page < FULL.tiles_per_page
-
-    def test_low_end_uses_gpu_decode_and_skips_the_loop_filter(self):
-        assert "--avcodec-hw=any" in LOW_END.instance_args
-        assert ":avcodec-skiploopfilter=all" in LOW_END.stream_options
-
-    def test_a_profile_must_allow_at_least_one_tile(self):
-        with pytest.raises(ValueError, match="tiles_per_page"):
-            PerformanceProfile("x", (), (), 0)
+class TestPlaybackOptions:
+    def test_gpu_decode_and_no_audio(self):
+        assert "--avcodec-hw=any" in INSTANCE_ARGS and "--no-audio" in INSTANCE_ARGS
 
     def test_rtsp_streams_are_forced_over_tcp(self):
-        assert ":rtsp-tcp" in media_options_for(RTSP_URL, "auto", LOW_END)
+        assert ":rtsp-tcp" in media_options_for(RTSP_URL, "auto")
 
     def test_non_rtsp_streams_are_not(self):
-        assert ":rtsp-tcp" not in media_options_for(HLS_URL, "auto", LOW_END)
+        assert ":rtsp-tcp" not in media_options_for(HLS_URL, "auto")
 
     def test_a_quality_cap_limits_adaptive_streams(self):
-        assert ":adaptive-maxheight=720" in media_options_for(HLS_URL, "720p", FULL)
+        assert ":adaptive-maxheight=720" in media_options_for(HLS_URL, "720p")
 
     def test_auto_quality_adds_no_cap(self):
-        assert not any("adaptive-maxheight" in option
-                       for option in media_options_for(HLS_URL, "auto", FULL))
+        assert not any("adaptive-maxheight" in option for option in media_options_for(HLS_URL, "auto"))
 
-    @pytest.mark.parametrize("profile", [LOW_END, FULL])
-    def test_no_profile_decodes_audio(self, profile):
-        assert "--no-audio" in profile.instance_args
-
-    def test_profile_options_are_carried_through(self):
-        assert ":clock-jitter=0" in media_options_for(RTSP_URL, "auto", LOW_END)
+    def test_shared_stream_tuning_is_carried_through(self):
+        assert ":clock-jitter=0" in media_options_for(RTSP_URL, "auto")
 
 
 class StubResolver:

@@ -174,9 +174,9 @@ class TestSiteAndWorkspace:
 
     def test_with_helpers_do_not_mutate_the_original(self):
         original = Workspace(sites=(Site("A"),))
-        updated = original.with_last_site("A").with_performance("full")
-        assert original.last_site == "" and original.performance == "low_end"
-        assert updated.last_site == "A" and updated.performance == "full"
+        updated = original.with_last_site("A").with_tiles_per_page(9)
+        assert original.last_site == "" and original.tiles_per_page == 4
+        assert updated.last_site == "A" and updated.tiles_per_page == 9
 
 
 class TestCameraReplacement:

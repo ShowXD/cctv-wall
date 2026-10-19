@@ -24,7 +24,11 @@ MIN_PORT = 1
 MAX_PORT = 65535
 NAME_LIMIT = 48
 SCHEMA_VERSION = 1
-DEFAULT_PERFORMANCE = "low_end"
+DEFAULT_TILES_PER_PAGE = 4
+DEFAULT_MAX_TILES = 16
+TILES_LIMIT = 64
+# Older files stored a named performance profile instead of a tile count.
+LEGACY_PROFILE_TILES = {"low_end": 4, "balanced": 9, "full": 16}
 DEFAULT_GEOMETRY = "1280x800"
 DEFAULT_SIDEBAR_WIDTH = 260
 MIN_SIDEBAR_WIDTH = 160
@@ -48,13 +52,17 @@ def _number(value: Any, default: int, field: str) -> int:
         raise ValueError(f"{field} must be a whole number, got {text!r}") from e
 
 
-def _sidebar_width(value: Any) -> int:
-    """側欄寬度只是版面偏好：壞值退回預設，超出範圍就夾住，不讓整個設定檔載入失敗。"""
+def _bounded(value: Any, default: int, low: int, high: int) -> int:
+    """版面偏好用：壞值退回預設，超出範圍就夾住，不讓整個設定檔因此載入失敗。"""
     try:
-        width = int(_text(value) or DEFAULT_SIDEBAR_WIDTH)
+        number = int(_text(value) or default)
     except ValueError:
-        return DEFAULT_SIDEBAR_WIDTH
-    return min(max(width, MIN_SIDEBAR_WIDTH), MAX_SIDEBAR_WIDTH)
+        number = default
+    return min(max(number, low), high)
+
+
+def _sidebar_width(value: Any) -> int:
+    return _bounded(value, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
 
 
 def _flag(value: Any) -> bool:
@@ -199,7 +207,8 @@ class Workspace:
 
     sites: tuple[Site, ...] = ()
     last_site: str = ""
-    performance: str = DEFAULT_PERFORMANCE
+    tiles_per_page: int = DEFAULT_TILES_PER_PAGE
+    max_tiles: int = DEFAULT_MAX_TILES
     geometry: str = DEFAULT_GEOMETRY
     language: str = DEFAULT_LANGUAGE
     strict_sync: bool = False
@@ -236,10 +245,14 @@ class Workspace:
         if duplicate:
             raise ValueError(f"duplicate site name {duplicate!r}")
         language = _text(raw.get("language")) or DEFAULT_LANGUAGE
+        max_tiles = _bounded(raw.get("max_tiles"), DEFAULT_MAX_TILES, 1, TILES_LIMIT)
         return cls(
             sites=tuple(built),
             last_site=_text(raw.get("last_site")),
-            performance=_text(raw.get("performance")) or DEFAULT_PERFORMANCE,
+            tiles_per_page=_bounded(raw.get("tiles_per_page", LEGACY_PROFILE_TILES.get(
+                _text(raw.get("performance")), DEFAULT_TILES_PER_PAGE)),
+                DEFAULT_TILES_PER_PAGE, 1, max_tiles),
+            max_tiles=max_tiles,
             geometry=_text(raw.get("geometry")) or DEFAULT_GEOMETRY,
             language=language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE,
             strict_sync=_flag(raw.get("strict_sync", False)),
@@ -251,7 +264,8 @@ class Workspace:
         return {
             "version": SCHEMA_VERSION,
             "last_site": self.last_site,
-            "performance": self.performance,
+            "tiles_per_page": self.tiles_per_page,
+            "max_tiles": self.max_tiles,
             "geometry": self.geometry,
             "language": self.language,
             "strict_sync": self.strict_sync,
@@ -281,8 +295,13 @@ class Workspace:
     def with_last_site(self, name: str) -> "Workspace":
         return replace(self, last_site=name)
 
-    def with_performance(self, key: str) -> "Workspace":
-        return replace(self, performance=key)
+    def with_tiles_per_page(self, tiles: int) -> "Workspace":
+        return replace(self, tiles_per_page=_bounded(tiles, self.tiles_per_page, 1, self.max_tiles))
+
+    def with_max_tiles(self, max_tiles: int) -> "Workspace":
+        """Lowering the cap also lowers the current page size so it never exceeds it."""
+        limit = _bounded(max_tiles, self.max_tiles, 1, TILES_LIMIT)
+        return replace(self, max_tiles=limit, tiles_per_page=min(self.tiles_per_page, limit))
 
     def with_geometry(self, geometry: str) -> "Workspace":
         return replace(self, geometry=geometry)

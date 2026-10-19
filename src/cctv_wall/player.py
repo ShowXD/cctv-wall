@@ -13,7 +13,7 @@ import sys
 from enum import Enum
 from typing import Protocol, Sequence
 
-from cctv_wall.performance import PerformanceProfile
+from cctv_wall.performance import INSTANCE_ARGS
 
 
 class PlaybackError(RuntimeError):
@@ -126,12 +126,12 @@ class VlcPlayer:
 
 
 class VlcPlayerFactory:
-    """Owns the shared libvlc Instance configured by a performance profile."""
+    """Owns the shared libvlc Instance configured with the wall's tuning."""
 
-    def __init__(self, profile: PerformanceProfile) -> None:
+    def __init__(self) -> None:
         import vlc  # imported here so the app can start without VLC and explain why
 
-        self._instance = vlc.Instance(*profile.instance_args)
+        self._instance = vlc.Instance(*INSTANCE_ARGS)
         if self._instance is None:
             raise PlaybackError("libvlc rejected the performance options")
 

@@ -9,7 +9,7 @@ from typing import Callable
 
 from PySide6.QtCore import QSize, QTimer, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
+from PySide6.QtWidgets import (QComboBox, QSpinBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
                                QMessageBox, QSplitter, QToolButton, QVBoxLayout,
                                QStyle, QWidget)
 
@@ -17,7 +17,6 @@ from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import LANGUAGE_LABELS, Translator
 from cctv_wall.models import Camera, Site, Workspace
-from cctv_wall.performance import PROFILES, PerformanceProfile, profile_for
 from cctv_wall.player import PlaybackError, PlayerFactory
 from cctv_wall.resolvers import StreamResolver
 from cctv_wall.resources import ProcessUsage, ResourceMonitor
@@ -31,7 +30,7 @@ from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import WallView
 from cctv_wall.urls import direct_url_with_stream
 
-FactoryBuilder = Callable[[PerformanceProfile, bool], PlayerFactory]
+FactoryBuilder = Callable[[bool], PlayerFactory]
 WorkspaceSaver = Callable[[Workspace], None]
 NATIVE_SHUTDOWN_DEADLINE_SECONDS = 3.0
 # Navigation action -> the command that carries it out. Adding one means adding a row.
@@ -54,7 +53,6 @@ class MainWindow(QMainWindow):
         self._save = save
         self._page = 0
         self._active_site_name = workspace.active_site.name if workspace.active_site else ""
-        self._profile = profile_for(workspace.performance)
         self._translator = Translator(workspace.language)
         self._resource_monitor = ResourceMonitor()
         self._usage: ProcessUsage | None = None
@@ -97,14 +95,14 @@ class MainWindow(QMainWindow):
     def _create_factory(self, strict_sync: bool) -> PlayerFactory:
         """Keep the normal wall available if the optional GStreamer runtime is absent."""
         try:
-            factory = self._factory_builder(self._profile, strict_sync)
+            factory = self._factory_builder(strict_sync)
             logger().info("playback backend=%s", "strict-timestamp-sync" if strict_sync else "vlc")
             return factory
         except PlaybackError as error:
             if strict_sync:
                 logger().warning("strict sync unavailable; using VLC backend: %s", error)
                 self._workspace = self._workspace.with_strict_sync(False)
-            factory = self._factory_builder(self._profile, False)
+            factory = self._factory_builder(False)
             logger().info("playback backend=vlc")
             return factory
 
@@ -135,7 +133,7 @@ class MainWindow(QMainWindow):
         layout_box.setSpacing(0)
         self._control_bar_widget = self._control_bar()
         layout_box.addWidget(self._control_bar_widget)
-        self._wall = WallView(self._factory, self._resolver, self._profile,
+        self._wall = WallView(self._factory, self._resolver, self._workspace.tiles_per_page,
                               on_solo=self._toggle_camera_focus,
                               on_health_change=self._refresh_status,
                               translator=self._translator,
@@ -228,15 +226,16 @@ class MainWindow(QMainWindow):
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout_box.addWidget(self._page_label)
         layout_box.addWidget(self._button("›", self._translator.t("next"), self._next_page, "pageControl"))
-        self._profile_box = QComboBox()
-        self._profile_box.setObjectName("profileBox")
-        self._profile_box.setToolTip(self._translator.t("view_profile"))
-        self._profile_box.setMinimumWidth(190)
-        for profile in PROFILES.values():
-            self._profile_box.addItem(self._profile_label(profile), profile.key)
-        self._profile_box.setCurrentIndex(self._profile_box.findData(self._profile.key))
-        self._profile_box.currentIndexChanged.connect(self._on_profile_selected)
-        layout_box.addWidget(self._profile_box)
+        self._tiles_box = QSpinBox()
+        self._tiles_box.setObjectName("tilesBox")
+        self._tiles_box.setToolTip(self._translator.t("tiles_per_page"))
+        self._tiles_box.setSuffix(self._translator.t("tiles_suffix"))
+        self._tiles_box.setRange(1, self._workspace.max_tiles)
+        self._tiles_box.setValue(self._workspace.tiles_per_page)
+        # Typing "12" must not first reconnect a 1-tile page: apply on Enter, focus-out or arrows.
+        self._tiles_box.setKeyboardTracking(False)
+        self._tiles_box.valueChanged.connect(self._on_tiles_changed)
+        layout_box.addWidget(self._tiles_box)
         self._language_box = QComboBox()
         self._language_box.setObjectName("languageBox")
         self._language_box.setToolTip(self._translator.t("language"))
@@ -409,31 +408,16 @@ class MainWindow(QMainWindow):
         self._persist()
         self._reload_sites()
 
-    def _profile_label(self, profile: PerformanceProfile) -> str:
-        """Keep persistent profile keys stable while presenting localised, useful names."""
-        return self._translator.t(f"profile_{profile.key}")
-
-    def _on_profile_selected(self, index: int) -> None:
-        key = self._profile_box.itemData(index)
-        chosen = PROFILES.get(str(key))
-        if chosen is None or chosen.key == self._profile.key:
-            return
-        try:
-            new_factory = self._factory_builder(chosen, self._workspace.strict_sync)
-        except PlaybackError as error:
-            logger().warning("performance profile refused: %s", error)
-            QMessageBox.warning(self, self._profile_label(chosen), str(error))
-            self._profile_box.setCurrentIndex(self._profile_box.findData(self._profile.key))
+    def _on_tiles_changed(self, tiles: int) -> None:
+        """Only the page layout changes; the playback backend and its decoders stay."""
+        if tiles == self._workspace.tiles_per_page:
             return
         self._exit_camera_focus_if_needed()
         self._wall.stop()
-        old_factory, self._factory = self._factory, new_factory
-        self._profile = chosen
-        self._wall.set_profile(chosen, new_factory)
-        old_factory.shutdown()
-        self._workspace = self._workspace.with_performance(chosen.key)
+        self._workspace = self._workspace.with_tiles_per_page(tiles)
+        self._wall.configure(self._factory, self._workspace.tiles_per_page)
         self._persist()
-        logger().info("performance profile=%s", chosen.key)
+        logger().info("tiles per page=%d", self._workspace.tiles_per_page)
         self._page = 0
         self._show_current_page()
 
@@ -506,7 +490,7 @@ class MainWindow(QMainWindow):
         if enabled == self._workspace.strict_sync:
             return True
         try:
-            new_factory = self._factory_builder(self._profile, enabled)
+            new_factory = self._factory_builder(enabled)
         except PlaybackError as error:
             # A dialog the operator dismisses leaves no trace; the log has to keep one.
             logger().warning("strict sync refused: %s", error)
@@ -514,7 +498,7 @@ class MainWindow(QMainWindow):
             return False
         self._wall.stop()
         old_factory, self._factory = self._factory, new_factory
-        self._wall.set_profile(self._profile, new_factory)
+        self._wall.configure(new_factory, self._workspace.tiles_per_page)
         old_factory.shutdown()
         self._workspace = self._workspace.with_strict_sync(enabled)
         self._sync_button.setChecked(enabled)

@@ -31,16 +31,16 @@ def _factory_builder(dry_run: bool):
     if dry_run:
         from cctv_wall.player import NullPlayerFactory
 
-        return lambda _profile, _strict_sync=False: NullPlayerFactory()
+        return lambda _strict_sync=False: NullPlayerFactory()
 
-    def build(profile, strict_sync: bool = False):
+    def build(strict_sync: bool = False):
         if strict_sync:
             from cctv_wall.gst_sync import GStreamerSyncPlayerFactory
 
             return GStreamerSyncPlayerFactory()
         from cctv_wall.player import VlcPlayerFactory
 
-        return VlcPlayerFactory(profile)
+        return VlcPlayerFactory()
 
     return build
 

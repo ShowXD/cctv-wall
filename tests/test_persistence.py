@@ -45,7 +45,7 @@ class TestLoad:
         assert workspace.site_names == ("Taipei Office", "Warehouse")
         assert workspace.active_site.name == "Taipei Office"
         assert len(workspace.active_site.cameras) == 2
-        assert workspace.performance == "balanced"
+        assert workspace.tiles_per_page == 9   # legacy "balanced" profile
         assert workspace.geometry == "1600x900"
         assert workspace.language == "zh_TW"
 
@@ -159,6 +159,25 @@ class TestPasswordProtection:
     def test_an_empty_password_stays_empty(self, tmp_path):
         stored = self._saved(tmp_path, "")
         assert stored["sites"][0]["cameras"][0]["password"] == ""
+
+
+class TestTilesPerPage:
+    @pytest.mark.parametrize("legacy,tiles", [("low_end", 4), ("balanced", 9), ("full", 16), ("x", 4)])
+    def test_a_legacy_profile_becomes_a_tile_count(self, legacy, tiles):
+        assert Workspace.from_raw({"performance": legacy}).tiles_per_page == tiles
+
+    def test_page_size_is_clamped_to_the_cap(self):
+        workspace = Workspace.from_raw({"tiles_per_page": 30, "max_tiles": 12})
+        assert workspace.tiles_per_page == 12
+        assert workspace.with_tiles_per_page(0).tiles_per_page == 1
+
+    def test_lowering_the_cap_shrinks_the_page(self):
+        workspace = Workspace().with_max_tiles(25).with_tiles_per_page(20).with_max_tiles(9)
+        assert (workspace.max_tiles, workspace.tiles_per_page) == (9, 9)
+
+    def test_round_trip_drops_the_legacy_key(self):
+        raw = Workspace.from_raw({"performance": "full"}).as_dict()
+        assert "performance" not in raw and raw["tiles_per_page"] == 16
 
 
 class TestSidebarPreference:

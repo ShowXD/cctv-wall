@@ -24,7 +24,7 @@ QLabel#resourceStatus { color: #8fa0b7; font-size: 9pt; }
 QLabel#liveBadge { color: #78dfad; background: #173a32; border: 1px solid #256047; border-radius: 10px; padding: 4px 9px; font-size: 9pt; font-weight: 700; }
 QFrame#controlBar { background: #151c28; border-bottom: 1px solid #202a38; }
 QLabel#pageLabel { color: #d7e0eb; min-width: 80px; font-weight: 600; }
-QComboBox#profileBox { min-width: 190px; }
+QSpinBox#tilesBox { min-width: 110px; }
 QComboBox#languageBox { min-width: 100px; }
 
 QFrame#videoTile { background: #090d14; border: 1px solid #263449; border-radius: 5px; }
@@ -45,8 +45,8 @@ QToolButton:checked { background: #6e3f35; border-color: #b86d56; color: #fff7f4
 QToolButton#pageControl { font-size: 16pt; min-width: 48px; min-height: 40px; padding: 0; }
 QToolButton#compactAction { min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0; }
 QToolButton#syncAction { min-width: 56px; max-width: 56px; min-height: 40px; max-height: 40px; padding: 0; }
-QComboBox, QLineEdit, QTreeWidget { background: #182231; color: #ebf1f9; border: 1px solid #354861; border-radius: 6px; padding: 7px; selection-background-color: #285a85; }
-QComboBox:hover, QLineEdit:hover { border-color: #4c6d8c; }
+QComboBox, QLineEdit, QSpinBox, QTreeWidget { background: #182231; color: #ebf1f9; border: 1px solid #354861; border-radius: 6px; padding: 7px; selection-background-color: #285a85; }
+QComboBox:hover, QLineEdit:hover, QSpinBox:hover { border-color: #4c6d8c; }
 QComboBox::drop-down { border: 0; width: 24px; }
 QTreeWidget { outline: 0; }
 QTreeWidget::item { padding: 5px 8px; border: 0; }
@@ -91,7 +91,7 @@ QLabel#resourceStatus { color: #64758c; font-size: 9pt; }
 QLabel#liveBadge { color: #14733e; background: #e2f5e9; border: 1px solid #a9d9b8; border-radius: 10px; padding: 4px 9px; font-size: 9pt; font-weight: 700; }
 QFrame#controlBar { background: #ffffff; border-bottom: 1px solid #dbe3ed; }
 QLabel#pageLabel { color: #354962; min-width: 80px; font-weight: 600; }
-QComboBox#profileBox { min-width: 190px; }
+QSpinBox#tilesBox { min-width: 110px; }
 QComboBox#languageBox { min-width: 100px; }
 QFrame#videoTile { background: #ffffff; border: 1px solid #bdcad9; border-radius: 5px; }
 QFrame#videoTile:hover { border-color: #3c85bd; }
@@ -110,8 +110,8 @@ QToolButton:checked { background: #ffe1d5; border-color: #d89b80; color: #78351f
 QToolButton#pageControl { font-size: 16pt; min-width: 48px; min-height: 40px; padding: 0; }
 QToolButton#compactAction { min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0; }
 QToolButton#syncAction { min-width: 56px; max-width: 56px; min-height: 40px; max-height: 40px; padding: 0; }
-QComboBox, QLineEdit, QTreeWidget { background: #ffffff; color: #1e3047; border: 1px solid #bdcad9; border-radius: 6px; padding: 7px; selection-background-color: #cfe4f7; }
-QComboBox:hover, QLineEdit:hover { border-color: #7ca6c9; }
+QComboBox, QLineEdit, QSpinBox, QTreeWidget { background: #ffffff; color: #1e3047; border: 1px solid #bdcad9; border-radius: 6px; padding: 7px; selection-background-color: #cfe4f7; }
+QComboBox:hover, QLineEdit:hover, QSpinBox:hover { border-color: #7ca6c9; }
 QComboBox::drop-down { border: 0; width: 24px; }
 QTreeWidget { outline: 0; }
 QTreeWidget::item { padding: 5px 8px; border: 0; }
