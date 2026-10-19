@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 from cctv_wall import quality as quality_module
 from cctv_wall.ai_feed import AiFeedConfig
@@ -82,8 +83,15 @@ class Camera:
 
     @property
     def label(self) -> str:
-        """清單上要顯示的名稱。刻意不依賴 urls.py，避免匯入循環。"""
-        return self.name or self.url or f"{self.host}:{self.port}"
+        """清單上要顯示的名稱；未命名時用網址，但絕不帶出帳密。刻意不依賴 urls.py，避免匯入循環。"""
+        if self.name:
+            return self.name
+        if not self.url:
+            return f"{self.host}:{self.port}"
+        parts = urlsplit(self.url)
+        if "@" not in parts.netloc:
+            return self.url
+        return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> "Camera":

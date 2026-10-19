@@ -5,10 +5,11 @@ from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, QMenu,
-                               QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
+                               QPushButton, QTreeWidgetItem, QVBoxLayout)
 
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
+from cctv_wall.ui.flat_tree import FlatTree
 
 # (site name, camera index) — the camera index is None on a site row.
 ItemReference = tuple[str, "int | None"]
@@ -18,13 +19,12 @@ def _reference(item: QTreeWidgetItem) -> ItemReference:
     return item.data(0, Qt.ItemDataRole.UserRole)
 
 
-class _SiteTree(QTreeWidget):
+class _SiteTree(FlatTree):
     """Sites with their cameras, reorderable by drag inside one level only."""
 
     def __init__(self, on_reorder: Callable[[], None]) -> None:
         super().__init__()
         self._on_reorder = on_reorder
-        self.setHeaderHidden(True)
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)

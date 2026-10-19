@@ -9,9 +9,8 @@ from urllib.parse import unquote, urlsplit
 from PySide6.QtCore import QSize, QTimer, Qt
 from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QFrame, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-                               QPushButton, QMenu, QSplitter, QTreeWidget, QTreeWidgetItem,
-                               QToolButton, QVBoxLayout, QWidget, QSizePolicy, QScrollArea,
-                               QStyledItemDelegate)
+                               QPushButton, QMenu, QSplitter, QTreeWidgetItem,
+                               QToolButton, QVBoxLayout, QWidget, QSizePolicy, QScrollArea)
 
 from cctv_wall import quality as quality_module
 from cctv_wall import vendors
@@ -19,6 +18,7 @@ from cctv_wall.i18n import Translator
 from cctv_wall.ai_feed import AiFeedConfig
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera, Site, Workspace
 from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
+from cctv_wall.ui.flat_tree import FlatTree
 from cctv_wall.urls import display_url
 
 PRIMARY_TEXT_FIELDS = ("name", "url")
@@ -43,16 +43,6 @@ class _SiteDraft:
     name: str
     cameras: list[Camera] = field(default_factory=list)
     ai_feeds: tuple[AiFeedConfig, ...] = ()  # 由「AI 辨識連線…」對話框編輯
-
-
-class _CenteredTreeEditorDelegate(QStyledItemDelegate):
-    """Keep the temporary rename field centered inside the taller tree rows."""
-
-    def updateEditorGeometry(self, editor: QWidget, option, index) -> None:
-        rect = option.rect.adjusted(3, 0, -3, 0)
-        height = min(30, max(1, rect.height() - 8))
-        editor.setGeometry(rect.x(), rect.y() + (rect.height() - height) // 2,
-                           rect.width(), height)
 
 
 class WorkspaceEditor(QDialog):
@@ -103,9 +93,7 @@ class WorkspaceEditor(QDialog):
     def _tree_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        self._tree = QTreeWidget()
-        self._tree.setHeaderHidden(True)
-        self._tree.setItemDelegate(_CenteredTreeEditorDelegate(self._tree))
+        self._tree = FlatTree()
         self._tree.itemSelectionChanged.connect(self._on_tree_select)
         self._tree.itemDoubleClicked.connect(self._rename_double_clicked)
         self._tree.itemChanged.connect(self._apply_inline_name)
