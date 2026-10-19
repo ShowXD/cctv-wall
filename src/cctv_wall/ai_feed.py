@@ -23,6 +23,7 @@ MAX_DELAY_MS = 30_000
 # 異常的 AI 端若一直不送換行，不能讓它無限吃記憶體。
 MAX_LINE_BYTES = 64 * 1024
 CONNECT_TIMEOUT_SECONDS = 5
+FIRST_BACKOFF_SECONDS = 1
 MAX_BACKOFF_SECONDS = 30
 # AI 時間與本機接收時間差超過這個值，多半是兩台機器的時鐘沒對時。
 CLOCK_SKEW_WARNING_SECONDS = 2.0
@@ -278,7 +279,7 @@ class AiFeedClient:
             _close(sock)
 
     def _run(self) -> None:
-        backoff = 1
+        backoff = FIRST_BACKOFF_SECONDS
         while not self._stopping.is_set():
             self._on_status(STATUS_RECONNECTING)
             try:
@@ -293,7 +294,7 @@ class AiFeedClient:
                     self._socket = sock
                 _log().info("ai_feed %s: connected", self.config.address)
                 self._on_status(STATUS_CONNECTED)
-                backoff = 1
+                backoff = FIRST_BACKOFF_SECONDS
                 self._read(sock)
                 with self._lock:
                     self._socket = None

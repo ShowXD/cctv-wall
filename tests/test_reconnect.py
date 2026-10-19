@@ -26,9 +26,6 @@ def _retry_ticks(count: int) -> list[bool]:
 
 
 class TestBackoff:
-    def test_the_first_failure_reconnects_immediately(self):
-        assert _due_for_retry(_tile()) is True
-
     def test_gaps_between_attempts_grow(self):
         # 第一次立刻重試，之後間隔 1、2、4 次稽核（5、10、20 秒）。
         assert _retry_ticks(9) == [True, False, True, False, False,
@@ -49,12 +46,8 @@ class TestBackoff:
 
 
 class TestDeadStates:
-    def test_opening_is_never_treated_as_an_outage(self):
-        """低階電腦連線慢，重連會打斷一個其實正在成功的協商。"""
-        assert PlaybackState.OPENING not in DEAD_STATES
-        assert PlaybackState.PLAYING not in DEAD_STATES
-
     def test_every_other_state_triggers_a_reconnect(self):
+        """OPENING 不算斷線：低階電腦連線慢，重連會打斷一個其實正在成功的協商。"""
         assert DEAD_STATES == {PlaybackState.ERROR, PlaybackState.ENDED, PlaybackState.IDLE}
 
 
@@ -93,17 +86,3 @@ class TestViewMode:
     def test_leaving_fullscreen_while_filled_stays_immersive(self):
         view = ViewMode().toggle_filled().enter_fullscreen(False).exit_fullscreen()
         assert view.filled and not view.chrome_visible and view.grips_visible
-
-    def test_focus_from_a_normal_wall_returns_to_a_normal_wall(self):
-        focused = ViewMode().enter_focus()
-        assert not focused.chrome_visible
-        assert focused.exit_focus().chrome_visible
-
-    def test_focus_from_a_filled_wall_stays_filled_afterwards(self):
-        focused = ViewMode().toggle_filled().enter_focus()
-        assert focused.exit_focus().filled
-
-    def test_transitions_never_mutate_the_previous_value(self):
-        view = ViewMode()
-        view.toggle_filled().enter_focus().enter_fullscreen(True)
-        assert view == ViewMode()

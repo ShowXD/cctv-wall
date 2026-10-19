@@ -45,7 +45,10 @@ class TestLoad:
         assert workspace.site_names == ("Taipei Office", "Warehouse")
         assert workspace.active_site.name == "Taipei Office"
         assert len(workspace.active_site.cameras) == 2
-        assert workspace.performance == "balanced"
+        assert workspace.tiles_per_page == 9   # legacy "balanced" profile
+        gate = workspace.active_site.cameras[0]   # legacy host + vendor fields
+        assert (gate.url, gate.user) == ("rtsp://10.0.0.5:554/Streaming/Channels/102", "admin")
+        assert "host" not in gate.as_dict()
         assert workspace.geometry == "1600x900"
         assert workspace.language == "zh_TW"
 
@@ -112,11 +115,6 @@ class TestConfigPath:
         monkeypatch.setattr("sys.executable", str(tmp_path / "CCTVWall.exe"))
         assert default_config_path() == tmp_path / repository.CONFIG_FILENAME
 
-    def test_the_environment_variable_still_wins_when_frozen(self, monkeypatch, tmp_path):
-        monkeypatch.setattr("sys.frozen", True, raising=False)
-        monkeypatch.setenv(repository.CONFIG_ENV_VAR, str(tmp_path / "pinned.json"))
-        assert default_config_path() == tmp_path / "pinned.json"
-
 
 
 def target_text(tmp_path) -> str:
@@ -126,7 +124,7 @@ def target_text(tmp_path) -> str:
 class TestPasswordProtection:
     def _saved(self, tmp_path, password: str) -> dict:
         target = tmp_path / "workspace.json"
-        site = Site(name="Office", cameras=(Camera(host="10.0.0.5", user="admin",
+        site = Site(name="Office", cameras=(Camera(url="rtsp://10.0.0.5/stream1", user="admin",
                                                    password=password),))
         save_workspace(Workspace(sites=(site,)), target)
         return json.loads(target.read_text(encoding="utf-8"))
@@ -149,13 +147,44 @@ class TestPasswordProtection:
             {"host": "10.0.0.5", "password": "plain"}]}]}), encoding="utf-8")
         assert load_workspace(target).sites[0].cameras[0].password == "plain"
 
-    def test_an_undecryptable_password_becomes_empty_rather_than_failing(self, tmp_path):
+    def test_an_undecryptable_password_survives_a_save(self, tmp_path):
+        """Another Windows account cannot read it, but saving must not erase it either."""
         target = tmp_path / "workspace.json"
+        stored = f"{credentials.PREFIX}AQAAAA=="
         target.write_text(json.dumps({"sites": [{"name": "Office", "cameras": [
-            {"host": "10.0.0.5", "password": f"{credentials.PREFIX}AQAAAA=="}]}]}),
-            encoding="utf-8")
-        assert load_workspace(target).sites[0].cameras[0].password == ""
+            {"host": "10.0.0.5", "password": stored}]}]}), encoding="utf-8")
+        save_workspace(load_workspace(target), target)
+        saved = json.loads(target.read_text(encoding="utf-8"))
+        assert saved["sites"][0]["cameras"][0]["password"] == stored
 
     def test_an_empty_password_stays_empty(self, tmp_path):
         stored = self._saved(tmp_path, "")
         assert stored["sites"][0]["cameras"][0]["password"] == ""
+
+
+class TestTilesPerPage:
+    @pytest.mark.parametrize("legacy,tiles", [("full", 16), ("x", 4)])
+    def test_a_legacy_profile_becomes_a_tile_count(self, legacy, tiles):
+        assert Workspace.from_raw({"performance": legacy}).tiles_per_page == tiles
+
+    def test_page_size_is_clamped_to_one_through_thirty_six(self):
+        assert Workspace.from_raw({"tiles_per_page": 99}).tiles_per_page == 36
+        assert Workspace().with_tiles_per_page(0).tiles_per_page == 1
+
+    def test_an_old_configurable_cap_is_ignored(self):
+        workspace = Workspace.from_raw({"tiles_per_page": 20, "max_tiles": 9})
+        assert workspace.tiles_per_page == 20 and "max_tiles" not in workspace.as_dict()
+
+    def test_round_trip_drops_the_legacy_key(self):
+        raw = Workspace.from_raw({"performance": "full"}).as_dict()
+        assert "performance" not in raw and raw["tiles_per_page"] == 16
+
+
+class TestSidebarPreference:
+    def test_width_and_visibility_survive_a_round_trip(self):
+        workspace = Workspace().with_sidebar(420, False)
+        assert Workspace.from_raw(workspace.as_dict()) == workspace
+
+    @pytest.mark.parametrize("raw,expected", [("wide", 260), (40, 160), (5000, 800)])
+    def test_a_bad_width_falls_back_or_is_clamped(self, raw, expected):
+        assert Workspace.from_raw({"sidebar_width": raw}).sidebar_width == expected

@@ -13,9 +13,8 @@ from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
-from cctv_wall.performance import PerformanceProfile, media_options_for
+from cctv_wall.performance import media_options_for
 from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
-from cctv_wall.resolvers import ResolveError, StreamResolver
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
 # Starting four RTSP sessions in the same event-loop turn can overwhelm a weak PC or a
@@ -37,13 +36,13 @@ DEAD_STATES = frozenset({PlaybackState.ERROR, PlaybackState.ENDED, PlaybackState
 MAX_RECONNECT_BACKOFF_TICKS = 6
 
 
-def _connection_start_interval(factory: PlayerFactory, profile: PerformanceProfile) -> int:
+def _connection_start_interval(factory: PlayerFactory, tiles_per_page: int) -> int:
     """Space normal RTSP connections without delaying the shared-clock backend."""
     if getattr(factory, "synchronized", False):
         return 0
-    if profile.tiles_per_page <= 4:
+    if tiles_per_page <= 4:
         return 650
-    if profile.tiles_per_page <= 9:
+    if tiles_per_page <= 9:
         return 350
     return 175
 
@@ -74,15 +73,13 @@ class VideoTile(QFrame):
     def __init__(self, camera: Camera, translator: Translator,
                  on_solo: Callable[[Camera], None] | None,
                  on_stream_change: Callable[[Camera, int], None] | None,
-                 on_retry: Callable[[Camera], None] | None = None,
-                 on_listen: Callable[[Camera | None], None] | None = None) -> None:
+                 on_retry: Callable[[Camera], None] | None = None) -> None:
         super().__init__()
         self.camera = camera
         self._translator = translator
         self._on_solo = on_solo
         self._on_stream_change = on_stream_change
         self._on_retry = on_retry
-        self._on_listen = on_listen
         self.setObjectName("videoTile")
         self.setMinimumSize(180, 120)
         self.surface = VideoSurface(self._open_solo, self._show_stream_menu)
@@ -90,7 +87,7 @@ class VideoTile(QFrame):
         card = QVBoxLayout(self)
         card.setContentsMargins(1, 1, 1, 1)
         card.addWidget(self.surface, 1)
-        # Same reason as the audio strip below: text on the image itself would be hidden.
+        # A native video surface paints over Qt siblings, so text lives in its own strip.
         self._ai = QLabel()
         self._ai.setObjectName("tileAi")
         self._ai.hide()
@@ -102,14 +99,6 @@ class VideoTile(QFrame):
         self._notice.setCursor(Qt.CursorShape.PointingHandCursor)
         self._notice.hide()
         card.addWidget(self._notice)
-        # A native video surface paints over Qt siblings, so the audio marker lives in
-        # its own strip rather than floating on the image.
-        self._audio = QLabel()
-        self._audio.setObjectName("tileAudio")
-        self._audio.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._audio.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._audio.hide()
-        card.addWidget(self._audio)
         self._set_tooltip()
 
 
@@ -129,12 +118,12 @@ class VideoTile(QFrame):
         self._set_tooltip()
         self._notice.hide()
 
-    def set_listening(self, listening: bool) -> None:
-        """Name the one camera whose audio is live, so 16 tiles cannot be confused."""
-        self._audio.setText(f"🔊  {self.camera.label}")
-        self._audio.setVisible(listening)
-        self.setProperty("listening", listening)
-        self._refresh_style(self)
+    def set_camera(self, camera: Camera) -> None:
+        """Show an edited camera in this card; a renamed camera's old AI result no longer applies."""
+        if camera.name != self.camera.name:
+            self._ai.hide()
+        self.camera = camera
+        self._set_tooltip()
 
     def show_ai_event(self, text: str) -> None:
         """Latest AI result for this camera; the full history lives in the side panel."""
@@ -159,11 +148,6 @@ class VideoTile(QFrame):
             self._on_retry(self.camera)
             event.accept()
             return
-        if (self._on_listen is not None and self._audio.isVisible()
-                and self._audio.geometry().contains(position)):
-            self._on_listen(None)
-            event.accept()
-            return
         super().mousePressEvent(event)
 
     def _open_solo(self) -> None:
@@ -173,9 +157,10 @@ class VideoTile(QFrame):
     def _show_stream_menu(self, event: QContextMenuEvent) -> None:
         menu = QMenu(self)
         menu.setTitle(self.camera.label)
-        direct_stream = stream_from_direct_url(self.camera.url) if self.camera.url else None
-        current_stream = direct_stream or self.camera.stream
-        can_switch = (not self.camera.url or direct_stream is not None) and self._on_stream_change is not None
+        # Only a URL that names its stream (".../stream2", "?stream=2") can be switched;
+        # guessing a vendor's URL format would break the camera instead.
+        current_stream = stream_from_direct_url(self.camera.url)
+        can_switch = current_stream is not None and self._on_stream_change is not None
         for stream in range(MIN_STREAM, MAX_STREAM + 1):
             action = QAction(self._translator.t("stream_choice", stream=stream), menu)
             action.setCheckable(True)
@@ -183,15 +168,11 @@ class VideoTile(QFrame):
             action.setEnabled(can_switch)
             action.triggered.connect(lambda _checked=False, value=stream: self._choose_stream(value))
             menu.addAction(action)
-        if self._on_listen is not None:
-            menu.addSeparator()
-            listening = self._audio.isVisible()
-            menu.addAction(self._translator.t("mute_camera" if listening else "listen_camera"),
-                           lambda: self._on_listen(None if listening else self.camera))
         menu.exec(event.globalPos())
 
     def _choose_stream(self, stream: int) -> None:
-        if self._on_stream_change is not None and stream != self.camera.stream:
+        if (self._on_stream_change is not None
+                and stream != stream_from_direct_url(self.camera.url)):
             self._on_stream_change(self.camera, stream)
 
 
@@ -234,23 +215,21 @@ def _due_for_retry(tile: _Tile) -> bool:
 class WallView(QWidget):
     """Renders one page, preserving the low-memory one-player-per-visible-tile rule."""
 
-    def __init__(self, factory: PlayerFactory, resolver: StreamResolver,
-                 profile: PerformanceProfile, on_solo: Callable[[Camera], None] | None = None,
+    def __init__(self, factory: PlayerFactory,
+                 tiles_per_page: int, on_solo: Callable[[Camera], None] | None = None,
                  on_health_change: Callable[[], None] | None = None,
                  translator: Translator | None = None,
                  on_stream_change: Callable[[Camera, int], None] | None = None) -> None:
         super().__init__()
         self._factory = factory
-        self._resolver = resolver
-        self._profile = profile
-        self._start_interval_ms = _connection_start_interval(factory, profile)
+        self._tiles_per_page = tiles_per_page
+        self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
         self._on_solo = on_solo
         self._on_health_change = on_health_change
         self._translator = translator or Translator()
         self._on_stream_change = on_stream_change
         self._tiles: list[_Tile] = []
         self._focused_tile: _Tile | None = None
-        self._listening: Camera | None = None
         self._pending_starts: list[_Tile] = []
         self._start_timer = QTimer(self)
         self._start_timer.setSingleShot(True)
@@ -273,15 +252,15 @@ class WallView(QWidget):
 
     @property
     def tiles_per_page(self) -> int:
-        return self._profile.tiles_per_page
+        return self._tiles_per_page
 
-    def set_profile(self, profile: PerformanceProfile, factory: PlayerFactory) -> None:
-        """Swap tuning and backend together, only while stopped."""
+    def configure(self, factory: PlayerFactory, tiles_per_page: int) -> None:
+        """Swap backend and page size together, only while stopped."""
         if self._tiles:
             raise RuntimeError("cannot replace playback backend while tiles are active")
-        self._profile = profile
         self._factory = factory
-        self._start_interval_ms = _connection_start_interval(factory, profile)
+        self._tiles_per_page = tiles_per_page
+        self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
 
     def page_count(self, camera_count: int) -> int:
         return layout.page_count(camera_count, self.tiles_per_page)
@@ -291,6 +270,17 @@ class WallView(QWidget):
         displayed = (self._focused_tile,) if self._focused_tile is not None else self._tiles
         return sum(tile.player is not None and tile.player.state() == PlaybackState.PLAYING
                    for tile in displayed)
+
+    def video_surface_size(self) -> tuple[int, int] | None:
+        """Size of one video area on the grid, or None when no tile is shown."""
+        if not self._tiles or self._focused_tile is not None:
+            return None
+        surface = self._tiles[0].view.surface
+        return surface.width(), surface.height()
+
+    @property
+    def tile_count(self) -> int:
+        return len(self._tiles)
 
     @property
     def allocated_player_count(self) -> int:
@@ -310,8 +300,7 @@ class WallView(QWidget):
             # fallback label in the navigation tree, but must never escape into logs.
             log_label = camera.name or f"Camera {index + 1}"
             tile = _Tile(VideoTile(camera, self._translator, self._on_solo,
-                                   self._on_stream_change, self._retry_camera,
-                                   self.set_listening if self._profile.audio else None),
+                                   self._on_stream_change, self._retry_camera),
                          log_label)
             self._tiles.append(tile)
             self._grid.addWidget(tile.view, index // columns, index % columns)
@@ -344,22 +333,6 @@ class WallView(QWidget):
         for index, tile in enumerate(self._tiles):
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.show()
-
-    @property
-    def audio_available(self) -> bool:
-        return self._profile.audio
-
-    @property
-    def listening(self) -> Camera | None:
-        return self._listening
-
-    def set_listening(self, camera: Camera | None) -> None:
-        """At most one camera is audible; everything else stays muted."""
-        self._listening = camera
-        for tile in self._tiles:
-            self._apply_audio(tile)
-        if self._on_health_change is not None:
-            self._on_health_change()
 
     def show_ai_event(self, camera_name: str, text: str) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
@@ -402,6 +375,27 @@ class WallView(QWidget):
         if not _due_for_retry(tile):
             return False
         logger().info("camera=%s reconnecting", tile.log_label)
+        self._release(tile)
+        self._start(tile)
+        return True
+
+    def replace_camera(self, old: Camera, new: Camera) -> bool:
+        """Reconnect only the tile showing `old`; the rest of the page keeps playing.
+
+        False means the caller has to rebuild the page instead, because the strict-sync
+        backend runs every tile on one shared clock. A camera not on this page needs nothing.
+        """
+        tile = next((t for t in self._tiles if t.view.camera == old), None)
+        if tile is None:
+            return True
+        if getattr(self._factory, "synchronized", False):
+            return False
+        tile.view.set_camera(new)
+        tile.log_label = new.name or tile.log_label
+        if tile in self._pending_starts:
+            return True   # not connected yet; it will start with the new settings
+        tile.reset_backoff()
+        logger().info("camera=%s reconnecting with new settings", tile.log_label)
         self._release(tile)
         self._start(tile)
         return True
@@ -486,17 +480,16 @@ class WallView(QWidget):
         try:
             camera = tile.view.camera
             logger().info("connecting camera=%s", tile.log_label)
-            url = self._resolver.resolve(build_url(camera), camera.quality)
+            url = build_url(camera)
             player = self._factory.create()
-            player.play(url, media_options_for(url, camera.quality, self._profile),
+            player.play(url, media_options_for(url),
                         int(tile.view.surface.winId()))
             tile.player = player
-            self._apply_audio(tile)
             state = player.state()
             self._log_state_change(tile, state)
             if state == PlaybackState.PLAYING:
                 tile.view.set_playing()
-        except (ResolveError, PlaybackError, ValueError, OSError) as error:
+        except (PlaybackError, ValueError, OSError) as error:
             if player is not None:
                 try:
                     player.release()
@@ -505,12 +498,6 @@ class WallView(QWidget):
             reason = redact(str(error))
             logger().warning("camera=%s: %s", tile.log_label, reason)
             tile.view.show_notice(f"{tile.log_label}\n{reason}", "error")
-
-    def _apply_audio(self, tile: _Tile) -> None:
-        audible = self._profile.audio and tile.view.camera == self._listening
-        if tile.player is not None:
-            tile.player.set_muted(not audible)
-        tile.view.set_listening(audible)
 
     @staticmethod
     def _log_state_change(tile: _Tile, state: PlaybackState) -> None:

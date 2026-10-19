@@ -31,16 +31,16 @@ def _factory_builder(dry_run: bool):
     if dry_run:
         from cctv_wall.player import NullPlayerFactory
 
-        return lambda _profile, _strict_sync=False: NullPlayerFactory()
+        return lambda _strict_sync=False: NullPlayerFactory()
 
-    def build(profile, strict_sync: bool = False):
+    def build(strict_sync: bool = False):
         if strict_sync:
             from cctv_wall.gst_sync import GStreamerSyncPlayerFactory
 
             return GStreamerSyncPlayerFactory()
         from cctv_wall.player import VlcPlayerFactory
 
-        return VlcPlayerFactory(profile)
+        return VlcPlayerFactory()
 
     return build
 
@@ -64,16 +64,6 @@ def _check(bundled: Path | None) -> int:
         lines.append(VLC_HINT)
         status = 2
     try:
-        # Import exactly what resolvers.py needs, so a pass here really means YouTube works.
-        from yt_dlp import YoutubeDL, version as yt_version  # noqa: F401
-
-        lines.append(f"yt-dlp      : {yt_version.__version__}")
-    except Exception as e:
-        # A diagnostic must report rather than crash, and yt-dlp drags in a long tail of
-        # optional dependencies — so name the actual failure instead of guessing at it.
-        lines.append(f"yt-dlp      : UNAVAILABLE — {type(e).__name__}: {e}")
-        lines.append("              only YouTube sources are affected; RTSP and files still work")
-    try:
         # Build exactly what the sync button builds. The GI runtime loads inside this
         # constructor, so a pass here means pressing the button will really work.
         from cctv_wall.gst_sync import GStreamerSyncPlayerFactory
@@ -88,26 +78,39 @@ def _check(bundled: Path | None) -> int:
         else:
             lines.append("strict sync : available")
     except Exception as e:
-        # Same reasoning as yt-dlp: a diagnostic names the failure instead of crashing.
+        # A diagnostic names the failure instead of crashing.
         lines.append(f"strict sync : UNAVAILABLE — {type(e).__name__}: {e}")
         lines.append("              the wall still plays; only NTP timestamp sync is off")
     message = "\n".join(lines)
     if sys.stdout is None:
         # Double-clicked windowed exe: no console exists, so show the report in a dialog.
-        _show_report(message, failed=status != 0)
+        _show_report(message, failed=status != 0, title="CCTV Wall — environment check")
     else:
         print(message)
     return status
 
 
-def _show_report(message: str, failed: bool) -> None:
+def _show_report(message: str, failed: bool, title: str) -> None:
     """Only shut down the QApplication when this report is the one that created it."""
     existing = QApplication.instance()
     application = existing or QApplication([])
     show = QMessageBox.critical if failed else QMessageBox.information
-    show(None, "CCTV Wall — environment check", message)
+    show(None, title, message)
     if existing is None:
         application.quit()
+
+
+def _fail(message: str, status: int) -> int:
+    """Report a startup failure where the operator can see it, and keep it in the log.
+
+    The released exe has no console, so stderr alone would make it vanish silently.
+    """
+    logger().error("startup failed: %s", message)
+    if sys.stderr is None:
+        _show_report(message, failed=True, title="CCTV Wall")
+    else:
+        print(message, file=sys.stderr)
+    return status
 
 
 def _apply_system_theme(application: QApplication, scheme: Qt.ColorScheme | None = None) -> None:
@@ -130,8 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             import vlc  # noqa: F401  — checked here so the failure message stays friendly
         except (ImportError, OSError) as e:
-            print(f"libvlc is unavailable: {e}\n{VLC_HINT}", file=sys.stderr)
-            return 2
+            return _fail(f"libvlc is unavailable: {e}\n{VLC_HINT}", 2)
 
     application = QApplication(sys.argv)
     # Point sizes respect Windows display scaling; the platform default is too small for a
@@ -152,25 +154,23 @@ def main(argv: list[str] | None = None) -> int:
         workspace = load_workspace()
     except WorkspaceError as e:
         startup.dismiss()
-        print(f"{e}\n\nFix or delete {default_config_path()} and try again.", file=sys.stderr)
-        return 1
+        return _fail(f"{e}\n\nFix or delete {default_config_path()} and try again.", 1)
 
     startup.set_progress(45, "正在準備播放環境…")
     startup.set_progress(65, "正在載入監看介面…")
     try:
-        # These imports pull in VLC, yt-dlp and the complete widget tree.  Delaying
+        # These imports pull in VLC and the complete widget tree.  Delaying
         # them until after StartupProgress is visible makes slow PCs acknowledge a
         # launch immediately rather than presenting an unresponsive desktop.
-        from cctv_wall.resolvers import default_resolver
         from cctv_wall.ui.app import MainWindow
 
         startup.set_progress(80, "正在建立影像牆…")
-        window = MainWindow(workspace, _factory_builder(dry_run), default_resolver(), save_workspace)
+        window = MainWindow(workspace, _factory_builder(dry_run), save_workspace)
     except Exception as e:  # a failure here would leave a dead window: say why, then stop
         startup.dismiss()
+        result = _fail(f"could not start: {e}", 1)
         application.quit()
-        print(f"could not start: {e}", file=sys.stderr)
-        return 1
+        return result
 
     startup.set_progress(100, "準備完成")
     if dry_run:

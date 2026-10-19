@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
+from urllib.parse import unquote, urlsplit, urlunsplit
 
-from cctv_wall import quality as quality_module
-from cctv_wall.ai_feed import AiFeedConfig
 from cctv_wall import vendors
+from cctv_wall.ai_feed import AiFeedConfig
 
 MIN_STREAM = 1
 MAX_STREAM = 4
@@ -23,8 +23,15 @@ MIN_PORT = 1
 MAX_PORT = 65535
 NAME_LIMIT = 48
 SCHEMA_VERSION = 1
-DEFAULT_PERFORMANCE = "low_end"
+DEFAULT_TILES_PER_PAGE = 4
+# A fixed ceiling on concurrent decoders; more than this is unwatchable on one screen anyway.
+TILES_LIMIT = 36
+# Older files stored a named performance profile instead of a tile count.
+LEGACY_PROFILE_TILES = {"low_end": 4, "balanced": 9, "full": 16}
 DEFAULT_GEOMETRY = "1280x800"
+DEFAULT_SIDEBAR_WIDTH = 260
+MIN_SIDEBAR_WIDTH = 160
+MAX_SIDEBAR_WIDTH = 800
 DEFAULT_LANGUAGE = "zh_TW"
 SUPPORTED_LANGUAGES = frozenset({"zh_TW", "en"})
 
@@ -44,6 +51,19 @@ def _number(value: Any, default: int, field: str) -> int:
         raise ValueError(f"{field} must be a whole number, got {text!r}") from e
 
 
+def _bounded(value: Any, default: int, low: int, high: int) -> int:
+    """版面偏好用：壞值退回預設，超出範圍就夾住，不讓整個設定檔因此載入失敗。"""
+    try:
+        number = int(_text(value) or default)
+    except ValueError:
+        number = default
+    return min(max(number, low), high)
+
+
+def _sidebar_width(value: Any) -> int:
+    return _bounded(value, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+
+
 def _flag(value: Any) -> bool:
     """優先吃 JSON 布林值；也接受常見的舊字串，但不會把 'false' 當成真。"""
     if isinstance(value, bool):
@@ -53,61 +73,72 @@ def _flag(value: Any) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Camera:
-    """一個影像來源：RTSP 攝影機、本機檔案，或網路／YouTube 連結。"""
+    """一台攝影機：顯示名稱、影像網址，以及分開存放的帳密。
+
+    網址本身不放帳密：帳密只在播放時由 urls.build_url 組進去，
+    所以網址可以安心顯示在清單、紀錄與錯誤訊息裡。
+    """
 
     name: str = ""
-    url: str = ""            # 檔案與 YouTube 用；有值時蓋掉 RTSP 欄位
-    host: str = ""
-    port: int = DEFAULT_PORT
+    url: str = ""
     user: str = ""
     password: str = ""
-    vendor: str = vendors.GENERIC_VENDOR
-    path_template: str = ""
-    stream: int = MIN_STREAM
-    quality: str = quality_module.DEFAULT_QUALITY
 
     def __post_init__(self) -> None:
-        if not self.url and not self.host:
-            raise ValueError("camera needs either a direct url or a host address")
-        if not MIN_PORT <= self.port <= MAX_PORT:
-            raise ValueError(f"port must be {MIN_PORT}-{MAX_PORT}, got {self.port}")
-        if not MIN_STREAM <= self.stream <= MAX_STREAM:
-            raise ValueError(f"stream must be {MIN_STREAM}-{MAX_STREAM}, got {self.stream}")
-        if not vendors.is_known(self.vendor):
-            raise ValueError(f"unknown vendor {self.vendor!r}")
-        if not quality_module.is_known(self.quality):
-            raise ValueError(f"unknown quality {self.quality!r}")
-        if not self.url and self.vendor == vendors.CUSTOM_VENDOR and not self.path_template:
-            raise ValueError("vendor 'custom' requires a path_template")
+        if not self.url:
+            raise ValueError("camera needs a url")
 
     @property
     def label(self) -> str:
-        """清單上要顯示的名稱。刻意不依賴 urls.py，避免匯入循環。"""
-        return self.name or self.url or f"{self.host}:{self.port}"
+        """清單上要顯示的名稱；未命名時用網址，但絕不帶出帳密。刻意不依賴 urls.py，避免匯入循環。"""
+        return self.name or _without_credentials(self.url)[0]
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> "Camera":
-        """從弱型別輸入建立：JSON 值或 GUI 輸入的字串。"""
+        """從弱型別輸入建立：JSON 值或 GUI 輸入的字串。
+
+        舊版設定用主機／port／廠牌／串流欄位描述攝影機，這裡一次轉成網址；
+        網址裡夾帶的帳密則搬到帳密欄位（欄位已有值時以欄位為準）。
+        """
+        url = _text(raw.get("url")) or _legacy_url(raw)
+        url, embedded_user, embedded_password = _without_credentials(url)
         return cls(
             name=_text(raw.get("name"))[:NAME_LIMIT],
-            url=_text(raw.get("url")),
-            host=_text(raw.get("host")),
-            port=_number(raw.get("port"), DEFAULT_PORT, "port"),
-            user=_text(raw.get("user")),
-            password=_text(raw.get("password")),
-            vendor=_text(raw.get("vendor")) or vendors.GENERIC_VENDOR,
-            path_template=_text(raw.get("path_template")),
-            stream=_number(raw.get("stream"), MIN_STREAM, "stream"),
-            quality=_text(raw.get("quality")) or quality_module.DEFAULT_QUALITY,
+            url=url,
+            user=_text(raw.get("user")) or embedded_user,
+            password=_text(raw.get("password")) or embedded_password,
         )
 
     def as_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name, "url": self.url, "host": self.host, "port": self.port,
-            "user": self.user, "password": self.password, "vendor": self.vendor,
-            "path_template": self.path_template, "stream": self.stream,
-            "quality": self.quality,
-        }
+        return {"name": self.name, "url": self.url, "user": self.user, "password": self.password}
+
+
+def _without_credentials(url: str) -> tuple[str, str, str]:
+    """把 rtsp://user:pass@host/... 拆成不含帳密的網址與帳密；檔案路徑原樣回傳。"""
+    parts = urlsplit(url)
+    if "@" not in parts.netloc:
+        return url, "", ""
+    userinfo, host = parts.netloc.rsplit("@", 1)
+    user, _, password = userinfo.partition(":")
+    return urlunsplit(parts._replace(netloc=host)), unquote(user), unquote(password)
+
+
+def _legacy_url(raw: Mapping[str, Any]) -> str:
+    """舊版 host + vendor 樣板 → 網址（不含帳密）。沒有 host 就回空字串，交給驗證報錯。"""
+    host = _text(raw.get("host"))
+    if not host:
+        return ""
+    port = _number(raw.get("port"), DEFAULT_PORT, "port")
+    if not MIN_PORT <= port <= MAX_PORT:
+        raise ValueError(f"port must be {MIN_PORT}-{MAX_PORT}, got {port}")
+    stream = _number(raw.get("stream"), MIN_STREAM, "stream")
+    if not MIN_STREAM <= stream <= MAX_STREAM:
+        raise ValueError(f"stream must be {MIN_STREAM}-{MAX_STREAM}, got {stream}")
+    vendor = _text(raw.get("vendor")) or vendors.GENERIC_VENDOR
+    if not vendors.is_known(vendor):
+        raise ValueError(f"unknown vendor {vendor!r}")
+    template = vendors.template_for(vendor, _text(raw.get("path_template")))
+    return f"rtsp://{host}:{port}/{vendors.render_path(template, stream)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,10 +210,12 @@ class Workspace:
 
     sites: tuple[Site, ...] = ()
     last_site: str = ""
-    performance: str = DEFAULT_PERFORMANCE
+    tiles_per_page: int = DEFAULT_TILES_PER_PAGE
     geometry: str = DEFAULT_GEOMETRY
     language: str = DEFAULT_LANGUAGE
     strict_sync: bool = False
+    sidebar_width: int = DEFAULT_SIDEBAR_WIDTH
+    sidebar_visible: bool = True
 
     def site(self, name: str) -> Site | None:
         return next((s for s in self.sites if s.name == name), None)
@@ -195,6 +228,15 @@ class Workspace:
     @property
     def site_names(self) -> tuple[str, ...]:
         return tuple(s.name for s in self.sites)
+
+    def unique_site_name(self, base: str) -> str:
+        """`base`, or `base 2`, `base 3`… — site names identify a place, so they must differ."""
+        if self.site(base) is None:
+            return base
+        number = 2
+        while self.site(f"{base} {number}") is not None:
+            number += 1
+        return f"{base} {number}"
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> "Workspace":
@@ -217,20 +259,26 @@ class Workspace:
         return cls(
             sites=tuple(built),
             last_site=_text(raw.get("last_site")),
-            performance=_text(raw.get("performance")) or DEFAULT_PERFORMANCE,
+            tiles_per_page=_bounded(raw.get("tiles_per_page", LEGACY_PROFILE_TILES.get(
+                _text(raw.get("performance")), DEFAULT_TILES_PER_PAGE)),
+                DEFAULT_TILES_PER_PAGE, 1, TILES_LIMIT),
             geometry=_text(raw.get("geometry")) or DEFAULT_GEOMETRY,
             language=language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE,
             strict_sync=_flag(raw.get("strict_sync", False)),
+            sidebar_width=_sidebar_width(raw.get("sidebar_width")),
+            sidebar_visible=_flag(raw.get("sidebar_visible", True)),
         )
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "version": SCHEMA_VERSION,
             "last_site": self.last_site,
-            "performance": self.performance,
+            "tiles_per_page": self.tiles_per_page,
             "geometry": self.geometry,
             "language": self.language,
             "strict_sync": self.strict_sync,
+            "sidebar_width": self.sidebar_width,
+            "sidebar_visible": self.sidebar_visible,
             "sites": [s.as_dict() for s in self.sites],
         }
 
@@ -255,8 +303,8 @@ class Workspace:
     def with_last_site(self, name: str) -> "Workspace":
         return replace(self, last_site=name)
 
-    def with_performance(self, key: str) -> "Workspace":
-        return replace(self, performance=key)
+    def with_tiles_per_page(self, tiles: int) -> "Workspace":
+        return replace(self, tiles_per_page=_bounded(tiles, self.tiles_per_page, 1, TILES_LIMIT))
 
     def with_geometry(self, geometry: str) -> "Workspace":
         return replace(self, geometry=geometry)
@@ -265,6 +313,9 @@ class Workspace:
         """設定支援的介面語言；設定檔壞掉時安全退回繁體中文。"""
         return replace(self, language=language if language in SUPPORTED_LANGUAGES
                        else DEFAULT_LANGUAGE)
+
+    def with_sidebar(self, width: int, visible: bool) -> "Workspace":
+        return replace(self, sidebar_width=_sidebar_width(width), sidebar_visible=visible)
 
     def with_strict_sync(self, enabled: bool) -> "Workspace":
         """記住 RTSP 影像牆是否要使用支援 NTP 時間戳的播放後端。"""

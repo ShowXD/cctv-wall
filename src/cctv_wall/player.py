@@ -13,7 +13,7 @@ import sys
 from enum import Enum
 from typing import Protocol, Sequence
 
-from cctv_wall.performance import PerformanceProfile
+from cctv_wall.performance import INSTANCE_ARGS
 
 
 class PlaybackError(RuntimeError):
@@ -55,8 +55,6 @@ class Player(Protocol):
 
     def state(self) -> PlaybackState: ...
 
-    def set_muted(self, muted: bool) -> None: ...
-
     def release(self) -> None: ...
 
 
@@ -89,9 +87,6 @@ class VlcPlayer:
     def state(self) -> PlaybackState:
         name = str(self._player.get_state()).rsplit(".", 1)[-1]
         return _VLC_STATE_NAMES.get(name, PlaybackState.IDLE)
-
-    def set_muted(self, muted: bool) -> None:
-        self._player.audio_set_mute(muted)
 
     def release(self) -> None:
         """Tear down without blocking the Qt event loop on an unhealthy RTSP connection.
@@ -131,12 +126,12 @@ class VlcPlayer:
 
 
 class VlcPlayerFactory:
-    """Owns the shared libvlc Instance configured by a performance profile."""
+    """Owns the shared libvlc Instance configured with the wall's tuning."""
 
-    def __init__(self, profile: PerformanceProfile) -> None:
+    def __init__(self) -> None:
         import vlc  # imported here so the app can start without VLC and explain why
 
-        self._instance = vlc.Instance(*profile.instance_args)
+        self._instance = vlc.Instance(*INSTANCE_ARGS)
         if self._instance is None:
             raise PlaybackError("libvlc rejected the performance options")
 
@@ -152,7 +147,6 @@ class NullPlayer:
 
     def __init__(self, state: PlaybackState = PlaybackState.PLAYING) -> None:
         self.calls: list[tuple[str, tuple[str, ...], int]] = []
-        self.muted = False
         self.released = False
         self.reported_state = state
 
@@ -161,9 +155,6 @@ class NullPlayer:
 
     def state(self) -> PlaybackState:
         return self.reported_state
-
-    def set_muted(self, muted: bool) -> None:
-        self.muted = muted
 
     def release(self) -> None:
         self.released = True

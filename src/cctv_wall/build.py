@@ -6,10 +6,9 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from datetime import datetime
 from pathlib import Path
-
-from cctv_wall import __version__
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SPEC_FILE = PROJECT_ROOT / "cctv_wall.spec"
@@ -18,6 +17,12 @@ BUILD_DIRECTORY = PROJECT_ROOT / "build" / "releases"
 # The spec reads these. Releases are intentionally always one-file executables.
 ONEFILE_VAR = "CCTV_WALL_ONEFILE"
 VLC_DIR_VAR = "CCTV_WALL_VLC_DIR"
+
+
+def project_version() -> str:
+    """pyproject.toml is the one place the version lives; a copy elsewhere goes stale."""
+    with (PROJECT_ROOT / "pyproject.toml").open("rb") as file:
+        return tomllib.load(file)["project"]["version"]
 
 
 class BuildError(RuntimeError):
@@ -31,7 +36,7 @@ def _release_name(label: str | None) -> str:
                           for character in suffix).strip(".-")
     if not safe_suffix:
         raise ValueError("the build label must contain a letter or number")
-    return f"CCTVWall-{__version__}-{safe_suffix}"
+    return f"CCTVWall-{project_version()}-{safe_suffix}"
 
 
 def _arguments() -> argparse.Namespace:

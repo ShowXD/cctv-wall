@@ -5,10 +5,11 @@ from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, QMenu,
-                               QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout)
+                               QPushButton, QTreeWidgetItem, QVBoxLayout)
 
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
+from cctv_wall.ui.flat_tree import FlatTree
 
 # (site name, camera index) — the camera index is None on a site row.
 ItemReference = tuple[str, "int | None"]
@@ -18,18 +19,36 @@ def _reference(item: QTreeWidgetItem) -> ItemReference:
     return item.data(0, Qt.ItemDataRole.UserRole)
 
 
-class _SiteTree(QTreeWidget):
+class _SiteTree(FlatTree):
     """Sites with their cameras, reorderable by drag inside one level only."""
 
-    def __init__(self, on_reorder: Callable[[], None]) -> None:
+    def __init__(self, on_reorder: Callable[[], None],
+                 on_reselect: Callable[[QTreeWidgetItem], None]) -> None:
         super().__init__()
         self._on_reorder = on_reorder
-        self.setHeaderHidden(True)
+        self._on_reselect = on_reselect
+        self._pressed_current: QTreeWidgetItem | None = None
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDragDropOverwriteMode(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+
+    def mousePressEvent(self, event) -> None:
+        item = self.itemAt(event.position().toPoint())
+        self._pressed_current = item if item is not None and item is self.currentItem() else None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        # currentItemChanged stays silent when the selected row is clicked again, so that
+        # click — "put the enlarged camera back" — is reported here. Acting on release, and
+        # only on the same row, keeps a drag that starts on the selected row from firing it.
+        super().mouseReleaseEvent(event)
+        item = self.itemAt(event.position().toPoint())
+        if (item is not None and item is self._pressed_current
+                and event.button() == Qt.MouseButton.LeftButton):
+            self._on_reselect(item)
+        self._pressed_current = None
 
     def dropEvent(self, event) -> None:
         # A camera dropped onto another site would silently move it between locations;
@@ -59,12 +78,13 @@ class SiteNavigation(QFrame):
                  on_settings_requested: Callable[[], None],
                  on_site_action: Callable[[str, str], None], translator: Translator,
                  on_camera_selected: Callable[[str, Camera], None] | None = None,
-                 on_reorder: Callable[[Workspace], None] | None = None) -> None:
+                 on_reorder: Callable[[Workspace], None] | None = None,
+                 on_camera_action: Callable[[str, str, int], None] | None = None) -> None:
         super().__init__()
         self.setObjectName("siteNavigation")
-        self.setMinimumWidth(196)
-        self.setMaximumWidth(260)
+        self.setMinimumWidth(160)
         self._on_site_selected = on_site_selected
+        self._on_camera_action = on_camera_action
         self._translator = translator
         self._on_site_action = on_site_action
         self._on_camera_selected = on_camera_selected
@@ -79,10 +99,7 @@ class SiteNavigation(QFrame):
         product = QLabel("CCTV  WALL")
         product.setObjectName("productName")
         layout.addWidget(product)
-        subtitle = QLabel(self._translator.t("product_subtitle"))
-        subtitle.setObjectName("productSubtitle")
-        layout.addWidget(subtitle)
-        layout.addSpacing(18)
+        layout.addSpacing(6)
         section = QHBoxLayout()
         label = QLabel(self._translator.t("sites"))
         label.setObjectName("navigationLabel")
@@ -93,22 +110,27 @@ class SiteNavigation(QFrame):
         self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section.addWidget(self._count)
         layout.addLayout(section)
-        self._sites = _SiteTree(self._apply_reorder)
+        self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item))
         self._sites.setObjectName("siteList")
         self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self._sites, 1)
-        layout.addStretch(1)
+        # Two plain entries instead of one "manage" button: someone looking for the AI
+        # connections should not have to guess that they live behind a right-click.
         settings = QPushButton(self._translator.t("manage"))
         settings.setObjectName("settingsButton")
         settings.clicked.connect(on_settings_requested)
         layout.addWidget(settings)
+        self._ai_button = QPushButton(self._translator.t("ai_feeds_action"))
+        self._ai_button.setObjectName("settingsButton")
+        self._ai_button.clicked.connect(lambda: self._on_site_action("ai_feeds", ""))
+        layout.addWidget(self._ai_button)
 
     def set_workspace(self, workspace: Workspace) -> None:
         self._workspace = workspace
         current = workspace.active_site.name if workspace.active_site else ""
-        collapsed = self._collapsed_site_names()
+        collapsed = self._sites.collapsed_top_level_texts()
         self._sites.blockSignals(True)
         self._sites.clear()
         for site in workspace.sites:
@@ -128,12 +150,7 @@ class SiteNavigation(QFrame):
                 self._sites.setCurrentItem(item)
         self._sites.blockSignals(False)
         self._count.setText(str(len(workspace.sites)))
-
-    def _collapsed_site_names(self) -> frozenset[str]:
-        """Remember only what was collapsed, so a newly added site still opens."""
-        items = (self._sites.topLevelItem(index)
-                 for index in range(self._sites.topLevelItemCount()))
-        return frozenset(item.text(0) for item in items if not item.isExpanded())
+        self._ai_button.setEnabled(bool(workspace.sites))
 
     def _item_changed(self, current: QTreeWidgetItem | None,
                       _previous: QTreeWidgetItem | None) -> None:
@@ -176,17 +193,20 @@ class SiteNavigation(QFrame):
         site_name, camera_index = _reference(item)
         menu = QMenu(self)
         menu.setMinimumWidth(200)
-        self._add_action(menu, self._translator.t("watch_site"), "watch", site_name)
+        # A click already watches a site or enlarges a camera, so the menu only edits.
         if camera_index is None:
-            menu.addSeparator()
             self._add_action(menu, self._translator.t("add_camera_action"), "add_camera", site_name)
             self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
             self._add_action(menu, self._translator.t("rename"), "rename", site_name)
             self._add_action(menu, self._translator.t("ai_feeds_action"), "ai_feeds", site_name)
             menu.addSeparator()
             self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
-        else:
-            self._add_action(menu, self._translator.t("edit_cameras"), "add_camera", site_name)
+        elif self._on_camera_action is not None:
+            for text, action in ((self._translator.t("edit_camera"), "edit_camera"),
+                                 (self._translator.t("delete_camera"), "delete_camera")):
+                item = menu.addAction(text)
+                item.triggered.connect(lambda _checked=False, chosen=action:
+                                       self._on_camera_action(chosen, site_name, camera_index))
         menu.exec(self._sites.viewport().mapToGlobal(position))
 
     def _add_action(self, menu: QMenu, label: str, action: str, site_name: str) -> None:

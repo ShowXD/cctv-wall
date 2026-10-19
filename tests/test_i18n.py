@@ -10,10 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from cctv_wall import performance
 from cctv_wall.i18n import LANGUAGE_LABELS, _MESSAGES, Translator
-from cctv_wall.models import DEFAULT_LANGUAGE, DEFAULT_PERFORMANCE, SUPPORTED_LANGUAGES
-from cctv_wall.ui.editor import FIELD_LABEL_KEYS
+from cctv_wall.models import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
+from cctv_wall.ui.camera_form import FIELD_LABEL_KEYS
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "cctv_wall"
 # A whole `t(...)` argument list — `_text(raw.get("x"))` also ends in `t(`, so require a
@@ -21,11 +20,8 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "cctv_wall"
 # one level of nesting covers arguments like `t("k", profile=self._label(x))`.
 TRANSLATION_CALL = re.compile(r"(?<![\w_])t\(((?:[^()]|\([^()]*\))*)\)")
 KEY_LITERAL = re.compile(r"[\"']([a-z_0-9]+)[\"']")
-# Keys chosen at runtime from a profile key or a PlaybackState, never written literally.
-DYNAMIC_KEYS = frozenset({
-    "profile_low_end", "profile_balanced", "profile_full",
-    "connection_waiting", "no_video", "vlc_error", "not_playing",
-})
+# Keys chosen at runtime from a PlaybackState, never written literally.
+DYNAMIC_KEYS = frozenset({"connection_waiting", "no_video", "vlc_error", "not_playing"})
 # Form-field labels are looked up through a table, so the literal never appears in a call.
 INDIRECT_KEYS = frozenset(FIELD_LABEL_KEYS.values())
 
@@ -60,7 +56,7 @@ class TestCatalog:
     def test_the_dynamic_keys_really_are_defined(self):
         assert DYNAMIC_KEYS <= set(_MESSAGES["en"])
 
-    @pytest.mark.parametrize("language", sorted(SUPPORTED_LANGUAGES))
+    @pytest.mark.parametrize("language", sorted(SUPPORTED_LANGUAGES - {"en"}))
     def test_placeholders_match_between_languages(self, language):
         """A translation that drops `{count}` would fail at runtime, not here."""
         for key, english in _MESSAGES["en"].items():
@@ -76,9 +72,3 @@ class TestTranslator:
     def test_an_unknown_key_returns_itself_rather_than_raising(self):
         assert Translator().t("no_such_key") == "no_such_key"
 
-
-class TestDuplicatedDefaults:
-    def test_the_default_performance_key_names_a_real_profile(self):
-        """models must not depend on performance, so a test binds the two literals instead."""
-        assert DEFAULT_PERFORMANCE == performance.LOW_END.key
-        assert DEFAULT_PERFORMANCE in performance.PROFILES

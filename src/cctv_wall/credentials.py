@@ -69,17 +69,22 @@ def protect(value: str) -> str:
 
 
 def unprotect(value: str) -> str:
-    """Decrypt a stored password. An undecryptable value becomes empty, never a crash."""
+    """Decrypt a stored password. An undecryptable value is kept as it is, never a crash.
+
+    Returning "" here would be written back on the next save and lose the password for
+    good (another Windows user, a copied file). Kept as ciphertext, protect() leaves it
+    untouched, so the original account can still read it.
+    """
     if not value.startswith(PREFIX):
         return value
     library = _crypt32()
     if library is None:
-        return ""
+        return value
     try:
         payload = base64.b64decode(value[len(PREFIX):], validate=True)
     except ValueError:
-        return ""
+        return value
     decrypted = _call(library.CryptUnprotectData, payload)
     if decrypted is None:
-        return ""
+        return value
     return decrypted.decode("utf-8", errors="replace")

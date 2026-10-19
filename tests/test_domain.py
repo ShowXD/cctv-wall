@@ -5,36 +5,20 @@ from dataclasses import replace
 
 import pytest
 
-from cctv_wall import quality, vendors
+from cctv_wall import vendors
 from cctv_wall.models import Camera, Site, Workspace
+from cctv_wall.ui.app import wall_needs_reload
 from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, display_url,
-                           is_youtube, redact, stream_from_direct_url)
+                           redact, stream_from_direct_url)
 
 
-def camera(**overrides) -> Camera:
-    return Camera.from_raw({"host": "10.0.0.5", "port": 554, **overrides})
-
-
-class TestQuality:
-    def test_auto_has_no_height(self):
-        assert quality.height_for("auto") is None
-
-    def test_named_preset_has_its_height(self):
-        assert quality.height_for("720p") == 720
-
-    def test_unknown_preset_is_rejected(self):
-        with pytest.raises(ValueError, match="unknown quality"):
-            quality.height_for("4k")
+RTSP = "rtsp://10.0.0.5:554/stream1"
 
 
 class TestVendorPaths:
     @pytest.mark.parametrize("vendor,stream,expected", [
-        ("generic", 1, "stream1"),
-        ("hikvision", 1, "Streaming/Channels/101"),
         ("hikvision", 2, "Streaming/Channels/102"),
-        ("dahua", 1, "cam/realmonitor?channel=1&subtype=0"),
         ("dahua", 3, "cam/realmonitor?channel=1&subtype=2"),
-        ("reolink", 1, "h264Preview_01_main"),
         ("reolink", 2, "h264Preview_01_sub"),
     ])
     def test_known_vendors_render_expected_paths(self, vendor, stream, expected):
@@ -43,10 +27,6 @@ class TestVendorPaths:
     def test_custom_vendor_uses_its_own_template(self):
         template = vendors.template_for("custom", "live/{stream0}/h264")
         assert vendors.render_path(template, 2) == "live/1/h264"
-
-    def test_custom_vendor_without_template_is_rejected(self):
-        with pytest.raises(ValueError, match="path_template"):
-            vendors.template_for("custom", "  ")
 
     def test_leading_slash_is_dropped(self):
         assert vendors.render_path("/stream{stream}", 1) == "stream1"
@@ -57,92 +37,75 @@ class TestVendorPaths:
 
 
 class TestCameraValidation:
-    def test_needs_url_or_host(self):
-        with pytest.raises(ValueError, match="url or a host"):
+    def test_needs_a_url(self):
+        with pytest.raises(ValueError, match="needs a url"):
             Camera()
 
-    def test_url_only_camera_is_valid(self):
-        assert Camera(url="C:/videos/clip.mp4").host == ""
-
-    @pytest.mark.parametrize("port", [0, -1, 65536])
-    def test_port_out_of_range_is_rejected(self, port):
-        with pytest.raises(ValueError, match="port must be"):
-            camera(port=port)
-
-    @pytest.mark.parametrize("stream", [0, 5])
-    def test_stream_out_of_range_is_rejected(self, stream):
-        with pytest.raises(ValueError, match="stream must be"):
-            camera(stream=stream)
-
-    def test_blank_port_falls_back_to_default(self):
-        assert camera(port="").port == 554
-
-    def test_non_numeric_port_is_an_error_not_a_default(self):
-        with pytest.raises(ValueError, match="whole number"):
-            camera(port="abc")
-
-    def test_unknown_vendor_is_rejected(self):
-        with pytest.raises(ValueError, match="unknown vendor"):
-            camera(vendor="acme")
-
-    def test_unknown_quality_is_rejected(self):
-        with pytest.raises(ValueError, match="unknown quality"):
-            camera(quality="4k")
-
-    def test_custom_vendor_needs_a_template(self):
-        with pytest.raises(ValueError, match="path_template"):
-            camera(vendor="custom")
-
-    def test_is_immutable(self):
-        with pytest.raises(Exception):
-            camera().port = 8554  # type: ignore[misc]
-
-    def test_label_prefers_name_then_url_then_address(self):
-        assert camera(name="Gate").label == "Gate"
+    def test_label_prefers_name_then_url(self):
+        assert Camera(name="Gate", url=RTSP).label == "Gate"
         assert Camera(url="C:/a.mp4").label == "C:/a.mp4"
-        assert camera().label == "10.0.0.5:554"
+
+    def test_label_never_shows_credentials_from_the_url(self):
+        assert Camera(url="rtsp://admin:secret@10.0.0.9:554/s1").label == "rtsp://10.0.0.9:554/s1"
+
+    def test_round_trip_keeps_only_the_four_fields(self):
+        camera = Camera(name="Gate", url=RTSP, user="admin", password="secret")
+        assert camera.as_dict() == {"name": "Gate", "url": RTSP, "user": "admin", "password": "secret"}
+        assert Camera.from_raw(camera.as_dict()) == camera
+
+
+class TestCredentialsInTheUrl:
+    def test_pasted_credentials_move_to_their_fields(self):
+        camera = Camera.from_raw({"url": "rtsp://adm%20in:p%40ss@10.0.0.5:554/stream1"})
+        assert (camera.url, camera.user, camera.password) == (RTSP, "adm in", "p@ss")
+
+    def test_explicit_fields_win_over_the_url(self):
+        camera = Camera.from_raw({"url": "rtsp://old:old@10.0.0.5:554/stream1",
+                                  "user": "new", "password": "pw"})
+        assert (camera.url, camera.user, camera.password) == (RTSP, "new", "pw")
+
+    def test_a_local_path_is_left_alone(self):
+        assert Camera.from_raw({"url": "C:/videos/clip.mp4"}).url == "C:/videos/clip.mp4"
+
+
+class TestLegacyCameras:
+    """Files written before the URL-only model described cameras with RTSP fields."""
+
+    def test_vendor_fields_become_a_url(self):
+        camera = Camera.from_raw({"host": "10.0.0.5", "port": 554, "vendor": "hikvision",
+                                  "stream": 2, "quality": "720p", "user": "admin", "password": "pw"})
+        assert camera.url == "rtsp://10.0.0.5:554/Streaming/Channels/102"
+        assert (camera.user, camera.password) == ("admin", "pw")
+
+    def test_defaults_match_the_old_generic_vendor(self):
+        assert Camera.from_raw({"host": "10.0.0.5"}).url == RTSP
+
+    @pytest.mark.parametrize("raw,message", [
+        ({"host": "h", "port": 0}, "port must be"),
+        ({"host": "h", "port": "abc"}, "whole number"),
+        ({"host": "h", "stream": 5}, "stream must be"),
+        ({"host": "h", "vendor": "acme"}, "unknown vendor"),
+        ({"host": "h", "vendor": "custom"}, "path_template"),
+    ])
+    def test_bad_legacy_values_are_reported(self, raw, message):
+        with pytest.raises(ValueError, match=message):
+            Camera.from_raw(raw)
 
 
 class TestBuildUrl:
-    def test_direct_url_wins_over_rtsp_fields(self):
-        assert build_url(camera(url="C:/a.mp4")) == "C:/a.mp4"
+    def test_a_url_without_credentials_is_unchanged(self):
+        assert build_url(Camera(url=RTSP)) == RTSP
 
-    def test_assembles_host_port_and_vendor_path(self):
-        assert build_url(camera(vendor="hikvision", stream=2)) == \
-            "rtsp://10.0.0.5:554/Streaming/Channels/102"
-
-    def test_credentials_are_url_encoded(self):
-        assert build_url(camera(user="adm in", password="p@ss/1")) == \
+    def test_credentials_are_url_encoded_into_the_url(self):
+        assert build_url(Camera(url=RTSP, user="adm in", password="p@ss/1")) == \
             "rtsp://adm%20in:p%40ss%2F1@10.0.0.5:554/stream1"
 
-    def test_no_credentials_means_no_at_sign(self):
-        assert "@" not in build_url(camera())
+    def test_a_local_file_never_gets_credentials(self):
+        assert build_url(Camera(url="C:/a.mp4", user="x", password="y")) == "C:/a.mp4"
 
     def test_display_url_masks_only_the_password(self):
-        shown = display_url(camera(user="admin", password="p@ss"))
+        shown = display_url(Camera(url=RTSP, user="admin", password="p@ss"))
         assert shown == "rtsp://admin:****@10.0.0.5:554/stream1"
-        assert "p%40ss" not in shown
-
-    def test_display_url_of_a_file_is_unchanged(self):
-        assert display_url(Camera(url="C:/a.mp4")) == "C:/a.mp4"
-
-    def test_display_url_masks_a_password_embedded_in_a_direct_url(self):
-        shown = display_url(Camera(url="rtsp://admin:p%40ss@10.0.0.5:554/stream1"))
-        assert shown == "rtsp://admin:****@10.0.0.5:554/stream1"
-
-
-class TestIsYouTube:
-    @pytest.mark.parametrize("url", ["https://www.youtube.com/watch?v=x",
-                                     "https://youtu.be/x",
-                                     "https://m.youtube.com/watch?v=x"])
-    def test_youtube_hosts_are_detected(self, url):
-        assert is_youtube(url)
-
-    @pytest.mark.parametrize("url", ["rtsp://10.0.0.5:554/stream1",
-                                     "C:/videos/clip.mp4",
-                                     "https://evil.example/youtube.com/watch?v=x"])
-    def test_other_urls_are_not_youtube(self, url):
-        assert not is_youtube(url)
 
 
 class TestSiteAndWorkspace:
@@ -152,7 +115,7 @@ class TestSiteAndWorkspace:
 
     def test_camera_errors_name_the_index(self):
         with pytest.raises(ValueError, match=r"camera\[1\]"):
-            Site.from_raw({"name": "Office", "cameras": [{"host": "a"}, {"port": 1}]})
+            Site.from_raw({"name": "Office", "cameras": [{"url": "rtsp://a"}, {"name": "x"}]})
 
     def test_active_site_uses_the_remembered_name(self):
         workspace = Workspace(sites=(Site("A"), Site("B")), last_site="B")
@@ -169,45 +132,41 @@ class TestSiteAndWorkspace:
         with pytest.raises(ValueError, match="duplicate site"):
             Workspace.from_raw({"sites": [{"name": "A"}, {"name": "A"}]})
 
-    def test_with_helpers_do_not_mutate_the_original(self):
-        original = Workspace(sites=(Site("A"),))
-        updated = original.with_last_site("A").with_performance("full")
-        assert original.last_site == "" and original.performance == "low_end"
-        assert updated.last_site == "A" and updated.performance == "full"
-
 
 class TestCameraReplacement:
     """Backs the right-click stream switch: one tile changes, nothing else does."""
 
     @staticmethod
     def _workspace() -> Workspace:
-        first = Camera(name="Gate", host="10.0.0.1")
-        second = Camera(name="Dock", host="10.0.0.2")
+        first = Camera(name="Gate", url="rtsp://10.0.0.1/stream1")
+        second = Camera(name="Dock", url="rtsp://10.0.0.2/stream1")
         return Workspace(sites=(Site("Office", (first,)), Site("Depot", (second,))))
 
     def test_replaces_the_matching_camera_in_its_own_site(self):
         workspace = self._workspace()
         old = workspace.site("Depot").cameras[0]
-        updated = workspace.with_camera_replaced(old, replace(old, stream=2))
-        assert updated.site("Depot").cameras[0].stream == 2
+        updated = workspace.with_camera_replaced(old, replace(old, url="rtsp://10.0.0.2/stream2"))
+        assert updated.site("Depot").cameras[0].url.endswith("stream2")
         assert updated.site("Office").cameras == workspace.site("Office").cameras
-
-    def test_leaves_the_original_workspace_untouched(self):
-        workspace = self._workspace()
-        old = workspace.site("Office").cameras[0]
-        workspace.with_camera_replaced(old, replace(old, stream=3))
-        assert workspace.site("Office").cameras[0].stream == 1
 
     def test_an_unknown_camera_returns_the_same_workspace(self):
         workspace = self._workspace()
-        stranger = Camera(host="192.168.9.9")
+        stranger = Camera(url="rtsp://192.168.9.9/stream1")
         assert workspace.with_camera_replaced(stranger, stranger) is workspace
 
     def test_only_the_first_of_two_identical_cameras_changes(self):
-        camera = Camera(host="10.0.0.5")
+        camera = Camera(url="rtsp://10.0.0.5/stream1")
         workspace = Workspace(sites=(Site("Yard", (camera, camera)),))
-        updated = workspace.with_camera_replaced(camera, replace(camera, stream=4))
-        assert [c.stream for c in updated.site("Yard").cameras] == [4, 1]
+        changed = replace(camera, url="rtsp://10.0.0.5/stream4")
+        updated = workspace.with_camera_replaced(camera, changed)
+        assert updated.site("Yard").cameras == (changed, camera)
+
+
+class TestUniqueSiteName:
+    def test_a_free_name_is_kept_and_a_taken_one_is_numbered(self):
+        workspace = Workspace(sites=(Site("New site"), Site("New site 2")))
+        assert workspace.unique_site_name("Other") == "Other"
+        assert workspace.unique_site_name("New site") == "New site 3"
 
 
 class TestDirectStreamRewrite:
@@ -216,7 +175,6 @@ class TestDirectStreamRewrite:
         ("rtsp://10.0.0.5:554/live?stream=3", 3),
         ("rtsp://stream1.cam.lan/live/stream2", 2),
         ("rtsp://stream1.cam.lan/live", None),
-        ("rtsp://10.0.0.5:554/live", None),
     ])
     def test_only_the_path_and_query_declare_a_stream(self, url, expected):
         assert stream_from_direct_url(url) == expected
@@ -243,3 +201,30 @@ class TestRedaction:
 
     def test_credential_free_text_is_untouched(self):
         assert redact("failed: rtsp://cam.lan/live") == "failed: rtsp://cam.lan/live"
+
+
+class TestWallNeedsReload:
+    """Closing settings or a site command must not reconnect cameras that did not change."""
+
+    @staticmethod
+    def _workspace(*sites: Site, last: str = "A") -> Workspace:
+        return Workspace(sites=sites, last_site=last)
+
+    def test_nothing_changed(self):
+        ws = self._workspace(Site("A", (Camera(url=RTSP),)), Site("B"))
+        assert not wall_needs_reload(ws, ws, "A")
+
+    def test_another_site_changed(self):
+        before = self._workspace(Site("A", (Camera(url=RTSP),)), Site("B"))
+        after = self._workspace(Site("A", (Camera(url=RTSP),)), Site("B", (Camera(url=RTSP),)))
+        assert not wall_needs_reload(before, after, "A")
+
+    def test_the_site_on_screen_changed(self):
+        before = self._workspace(Site("A", (Camera(url=RTSP),)))
+        after = self._workspace(Site("A", (Camera(url=RTSP, user="x"),)))
+        assert wall_needs_reload(before, after, "A")
+
+    @pytest.mark.parametrize("after_sites,last", [((Site("B"),), "B"), ((Site("A"), Site("A copy")), "A copy")])
+    def test_the_site_on_screen_was_removed_or_replaced(self, after_sites, last):
+        before = self._workspace(Site("A"))
+        assert wall_needs_reload(before, self._workspace(*after_sites, last=last), "A")

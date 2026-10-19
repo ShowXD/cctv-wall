@@ -2,7 +2,7 @@
 
 # CCTV Wall
 
-**多地點、多路影像的 Qt 桌面影像牆 — RTSP 監視器、本機影片、YouTube 混在同一面牆上播放。**
+**多地點、多路影像的 Qt 桌面影像牆 — RTSP 監視器與本機影片混在同一面牆上播放。**
 
 專為**低階電腦**設計，可打包成單一 exe，現場電腦不必安裝任何東西。
 
@@ -22,18 +22,20 @@
 ## 功能
 
 - **多地點管理** — 一個地點多支攝影機，切換地點只連該地點，其餘連線不建立、不解碼
-- **混合來源** — RTSP 監視器、本機 MP4/MKV/AVI/MOV/TS、YouTube 直播與影片
+- **混合來源** — RTSP 監視器、本機 MP4/MKV/AVI/MOV/TS；攝影機只需填名稱、網址、帳號、密碼
 - **兩套播放後端** — VLC（一般播放，硬體需求最低）與 GStreamer（RTCP/NTP 嚴格時間戳同步）
 - **斷線自動重連** — 掉線的那一格自己退避重試（5→10→20→30 秒），不必人工按 `↻`
-- **三種效能檔** — 預設 `low_end`（4 格、GPU 解碼、關音訊），為低階電腦調校
-- **全狀態記憶** — 地點、攝影機、帳密、畫質、效能檔、視窗大小、介面語言自動存回 `workspace.json`，密碼以 Windows DPAPI 加密
+- **每頁格數自訂** — 頂部列直接輸入每頁格數（預設 4，最多 36），自動排成接近正方形，開啟時視窗會調成每格剛好 16:9；影像一律靜音、GPU 解碼，為低階電腦調校
+- **可收合側欄與快捷鍵** — 側欄可拖曳調寬、`Ctrl+B` 隱藏；`PgUp`/`PgDn` 翻頁、`Ctrl+PgUp`/`Ctrl+PgDn` 切換地點、`F5` 重連、`F11` 全螢幕
+- **設定立即存檔** — 設定視窗的每個動作當下寫入，關閉時影像牆重新載入一次
+- **全狀態記憶** — 地點、攝影機、帳密、每頁格數、側欄寬度與顯示狀態、視窗大小、介面語言自動存回 `workspace.json`，密碼以 Windows DPAPI 加密；舊版設定（效能檔、廠牌樣板）載入時自動轉換
 - **失敗隔離** — 單格失敗只顯示紅字，不影響其他畫面
 - **雙語介面** — 繁體中文／English 即時切換
 - **內建事件紀錄** — 不必開終端機就能查看失敗原因
 - **AI 結果對照** — 地點可設定多條 TCP 來源（每行一筆 JSON，一條可帶多台攝影機），結果延遲對齊後顯示在畫格下方與側欄
 - **單一 exe** — 內含 VLC 與 GStreamer，現場電腦零安裝
 
-238 個測試，不需要 VLC、不連網。
+190 個測試，不需要 VLC、不連網。
 
 ---
 
@@ -52,7 +54,7 @@ CCTVWall.exe --check    # 先跑診斷，libvlc 那行要有版本號
 
 接著把 `workspace.json` 放到 exe 旁邊（從
 [`workspace.example.json`](workspace.example.json) 複製修改），或直接開程式用
-左下角的「管理設定」建立。詳見 [部署說明](docs/BUILD.md)。
+左下角的「地點與攝影機」建立。詳見 [部署說明](docs/BUILD.md)。
 
 ### 開發者
 
@@ -61,7 +63,7 @@ CCTVWall.exe --check    # 先跑診斷，libvlc 那行要有版本號
 ```bash
 git clone https://github.com/ShowXD/cctv-wall.git
 cd cctv-wall
-uv sync                                    # 建立 .venv，安裝 Qt、python-vlc、yt-dlp、GStreamer
+uv sync                                    # 建立 .venv，安裝 Qt、python-vlc、GStreamer
 cp workspace.example.json workspace.json   # 填入你自己的攝影機
 uv run cctv-wall                           # 啟動
 ```
@@ -69,9 +71,9 @@ uv run cctv-wall                           # 啟動
 | 指令 | 用途 |
 | --- | --- |
 | `uv run cctv-wall` | 啟動 GUI |
-| `uv run cctv-wall --check` | 環境診斷：設定檔位置、libvlc 版本、yt-dlp 版本、嚴格同步可用性 |
+| `uv run cctv-wall --check` | 環境診斷：設定檔位置、libvlc 版本、嚴格同步可用性 |
 | `uv run cctv-wall --dry-run` | 用假的播放後端建整個 GUI 後立刻結束（不需要 VLC） |
-| `uv run --group dev pytest -q` | 執行 189 個測試 |
+| `uv run --group dev pytest -q` | 執行 190 個測試 |
 | `uv run build cctv-wall` | 打包成單一 exe |
 
 ---
@@ -80,14 +82,15 @@ uv run cctv-wall                           # 啟動
 
 ```powershell
 uv run build cctv-wall
-# → dist/releases/CCTVWall-0.2.0-YYYYMMDD-HHMMSS/CCTVWall.exe
+# → dist/releases/CCTVWall-<版本>-YYYYMMDD-HHMMSS/CCTVWall.exe
+#   版本取自 pyproject.toml（目前 0.4.0）
 ```
 
 推 tag 就會自動打包並建立 GitHub Release：
 
 ```bash
 # 先更新 pyproject.toml 的 version，再打 tag
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.4.0 && git push origin v0.4.0
 ```
 
 GitHub Actions 會在 Windows runner 上安裝 VLC、打包、用產出的 exe 跑 `--check`
@@ -100,7 +103,7 @@ GitHub Actions 會在 Windows runner 上安裝 VLC、打包、用產出的 exe �
 
 | 文件 | 內容 |
 | --- | --- |
-| [docs/USAGE.md](docs/USAGE.md) | 主畫面操作、設定視窗、vendor 樣板、畫質、`workspace.json` 欄位 |
+| [docs/USAGE.md](docs/USAGE.md) | 主畫面操作、快捷鍵、設定視窗、AI 結果對照、`workspace.json` 欄位 |
 | [docs/BUILD.md](docs/BUILD.md) | 打包指令、exe 體積與 GStreamer 去重、Win10 相容性、部署到現場電腦 |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 模組分層、效能設計、已知技術債 |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | 症狀對照表、嚴格時間戳同步 |
@@ -123,11 +126,10 @@ CI 每次 push 都會檢查它有沒有被誤加進版控。詳見 [SECURITY.md]
 | --- | --- |
 | GUI | PySide6 / Qt Widgets |
 | 播放 | libvlc（python-vlc）、GStreamer 1.x（PyGObject） |
-| 串流解析 | yt-dlp |
 | 環境 | uv |
 | 打包 | PyInstaller（onefile） |
 
-依賴方向單向朝內：領域層（`models` / `urls` / `vendors` / `quality` / `layout`）
+依賴方向單向朝內：領域層（`models` / `urls` / `vendors` / `layout`）
 不 import Qt 或 VLC，`repository.py` 是唯一碰硬碟的檔案，`player.py` 是唯一
 `import vlc` 的檔案。所以換掉任何一層都只動一個檔案。
 

@@ -9,7 +9,8 @@ uv run build cctv-wall
 
 此指令固定產生一個 EXE，並自動內含 VLC（打包電腦有安裝 VLC 時）、GStreamer
 嚴格時間戳同步元件與啟動進度畫面。每次輸出至：
-`dist/releases/CCTVWall-0.2.0-YYYYMMDD-HHMMSS/CCTVWall.exe`，不會覆寫舊版。
+`dist/releases/CCTVWall-<版本>-YYYYMMDD-HHMMSS/CCTVWall.exe`，不會覆寫舊版。
+版本一律讀自 `pyproject.toml` 的 `version`（目前 `0.4.0`），以下範例以此為例。
 `uv run build` 也可使用，`cctv-wall` 是明確標示建置目標的寫法。
 
 完整輸出範例：
@@ -19,9 +20,9 @@ uv run build cctv-wall
 [cctv-wall] output mode : onefile
 [cctv-wall] GStreamer strict-sync bundling: 374 files
 [cctv-wall] dropped 130 duplicate GStreamer files from the bundle root
-[cctv-wall] release : CCTVWall-0.2.0-20260805-143012
+[cctv-wall] release : CCTVWall-0.4.0-20260805-143012
 [cctv-wall] mode    : onefile (VLC + strict timestamp sync included)
-[cctv-wall] output  : ...\dist\releases\CCTVWall-0.2.0-20260805-143012
+[cctv-wall] output  : ...\dist\releases\CCTVWall-0.4.0-20260805-143012
 [cctv-wall] building…
 [cctv-wall] complete: ...\CCTVWall.exe
 ```
@@ -36,13 +37,13 @@ CI 的 release workflow 會自動擋下這種情況。
 
 | 輸入 | 產出的發行名稱 |
 | --- | --- |
-| `rc1` | `CCTVWall-0.2.0-rc1` |
-| `client a` | `CCTVWall-0.2.0-client-a` |
-| `客戶 A/B` | `CCTVWall-0.2.0-客戶-A-B` |
+| `rc1` | `CCTVWall-0.4.0-rc1` |
+| `client a` | `CCTVWall-0.4.0-client-a` |
+| `客戶 A/B` | `CCTVWall-0.4.0-客戶-A-B` |
 | `..--..` | **中止**：`the build label must contain a letter or number` |
 
 ```bash
-uv run build cctv-wall --label client-a            # → dist/releases/CCTVWall-0.2.0-client-a/
+uv run build cctv-wall --label client-a            # → dist/releases/CCTVWall-0.4.0-client-a/
 uv run build cctv-wall --label client-a --replace  # 明確清掉該單一發行資料夾並重建
 ```
 
@@ -115,7 +116,7 @@ Win10 相容性說明），GStreamer 在啟動時自己挑能用的那條。做�
 | `gstreamer/` | 210 MB | 嚴格時間戳同步用，執行期唯一會被載入的那份 |
 | `vlc/` | 136 MB | 一般播放後端 |
 | `PySide6` | 73 MB | 其中 `opengl32sw.dll` 佔 20 MB（Qt 軟體 OpenGL 後援） |
-| 其他 | 41 MB | Python 執行期、yt-dlp、OpenSSL |
+| 其他 | 41 MB | Python 執行期、OpenSSL（當時還含 yt-dlp，現已移除） |
 
 `cctv_wall.spec` 有兩道刻意的去重，**改動前請先讀懂，否則體積會直接回胖 50 MB**。
 
@@ -171,8 +172,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
 | plugin `bin/` 支援 DLL | ~36 MB | **不能砍**，見上方 Win10 相容性 |
 | `opengl32sw.dll` | 20 MB | Qt 軟體 OpenGL 後援。純 Widgets 理論上不需要，但本專案主打低階電腦，顯卡驅動不全時可能真的會退回它——要實機測 |
 | `gstreamer_plugins_gpl_restricted` | 23 MB | 含 x264/x265（編碼器，播放用不到）。另有散布 GPL 的授權問題值得確認 |
-| yt-dlp extractors | ~7 MB | 2098 個檔只需要 youtube + generic；省得不多但會拖慢 onefile 解壓 |
-| **只留 GStreamer、砍掉 VLC** | **136 MB** | 架構級重寫：`player.py` 整支、`performance.py` 三種效能檔（全是 libvlc 選項）、`resolvers.py` 的 YouTube 串接都要改 |
+| **只留 GStreamer、砍掉 VLC** | **136 MB** | 架構級重寫：`player.py` 整支、`performance.py` 的 libvlc 調校都要改 |
 
 ---
 
@@ -185,7 +185,6 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
 | plugins 放在 `binaries` 而非 `datas` | PyInstaller 會順帶處理 DLL 的相依性，當成 data 複製則不會 |
 | `upx=False` | UPX 壓縮會破壞部分 VLC 外掛 DLL |
 | `console=False` | GUI 程式，不要黑窗 |
-| `collect_all("yt_dlp")` | yt-dlp 的 extractor 是延遲匯入，不收集會在執行時找不到 |
 | `excludes=[numpy, matplotlib, PIL, ...]` | 本程式不用這些，排除可縮小體積 |
 
 ### 內含 VLC 的搜尋順序
@@ -222,7 +221,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
    `libvlc` 那行要有版本號才算過關。
 3. 把設定檔 `workspace.json` 放到 `CCTVWall.exe` 旁邊
    （可從 [`workspace.example.json`](../workspace.example.json) 複製修改，
-   或直接開程式用左下角的「管理設定」建立）。
+   或直接開程式用左下角的「地點與攝影機」建立）。
 4. 要放到別的路徑：設環境變數 `CCTV_WALL_CONFIG=D:\config\workspace.json`。
 5. 要開機自動啟動：把 `CCTVWall.exe` 的捷徑丟進
    `shell:startup`（`Win+R` 輸入這串即可開啟該資料夾）。
@@ -235,7 +234,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
 ### 換機器 / 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **154 passed**。
+2. `uv run --group dev pytest -q` → 應為 **190 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。
