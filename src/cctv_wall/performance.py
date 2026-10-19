@@ -31,7 +31,6 @@ class PerformanceProfile:
     instance_args: tuple[str, ...]
     stream_options: tuple[str, ...]
     tiles_per_page: int
-    audio: bool
 
     def __post_init__(self) -> None:
         if self.tiles_per_page < 1:
@@ -40,31 +39,31 @@ class PerformanceProfile:
 
 # VLC is embedded in a Qt native surface.  Let Qt own mouse/keyboard input so double-click
 # focus and the right-click stream menu are reliable on Windows.
+# CCTV monitoring is silent by design, so no profile decodes audio at all.
 _SHARED_ARGS = ("--no-video-title-show", "--no-snapshot-preview", "--no-sub-autodetect-file",
-                "--no-mouse-events", "--no-keyboard-events", "--no-fullscreen", "--quiet")
+                "--no-mouse-events", "--no-keyboard-events", "--no-fullscreen", "--quiet",
+                "--no-audio")
 
 LOW_END = PerformanceProfile(
     key="low_end",
     instance_args=_SHARED_ARGS + (
-        "--avcodec-hw=any", "--no-audio", "--no-osd", "--no-stats",
+        "--avcodec-hw=any", "--no-osd", "--no-stats",
         "--network-caching=1500", "--live-caching=1500", "--drop-late-frames",
         "--skip-frames",
     ),
     stream_options=(":avcodec-skiploopfilter=all", ":avcodec-skip-frame=1",
                     ":clock-jitter=0", ":clock-synchro=0"),
     tiles_per_page=4,
-    audio=False,
 )
 
 BALANCED = PerformanceProfile(
     key="balanced",
     instance_args=_SHARED_ARGS + (
-        "--avcodec-hw=any", "--no-audio", "--no-osd",
+        "--avcodec-hw=any", "--no-osd",
         "--network-caching=1000", "--live-caching=1000", "--drop-late-frames",
     ),
     stream_options=(":avcodec-skiploopfilter=nonref", ":clock-jitter=0"),
     tiles_per_page=9,
-    audio=False,
 )
 
 FULL = PerformanceProfile(
@@ -72,7 +71,6 @@ FULL = PerformanceProfile(
     instance_args=_SHARED_ARGS + ("--avcodec-hw=any", "--network-caching=1000"),
     stream_options=(),
     tiles_per_page=16,
-    audio=True,
 )
 
 PROFILES: Mapping[str, PerformanceProfile] = MappingProxyType(
@@ -93,6 +91,4 @@ def media_options_for(url: str, quality: str, profile: PerformanceProfile) -> tu
     height = quality_module.height_for(quality)
     if height is not None:
         options.append(f":adaptive-maxheight={height}")
-    if not profile.audio:
-        options.append(":no-audio")
     return tuple(options)

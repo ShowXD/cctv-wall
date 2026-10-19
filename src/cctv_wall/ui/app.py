@@ -246,9 +246,6 @@ class MainWindow(QMainWindow):
         self._language_box.setCurrentIndex(self._language_box.findData(self._translator.language))
         self._language_box.currentIndexChanged.connect(self._on_language_selected)
         layout_box.addWidget(self._language_box)
-        self._mute_button = self._icon_button(QStyle.StandardPixmap.SP_MediaVolumeMuted,
-                                              self._translator.t("mute_all"), self._mute_everything)
-        layout_box.addWidget(self._mute_button)
         self._maximize_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarMaxButton,
                                                   self._translator.t("maximize"),
                                                   self._toggle_window_maximized)
@@ -327,7 +324,6 @@ class MainWindow(QMainWindow):
         self._live_badge.setText(self._translator.t("live", live=self._wall.playing_count, total=visible))
         self._page_label.setText(self._translator.t("page", current=self._page + 1, total=pages))
         self._show_resources()
-        self._refresh_audio_button()
 
     def _sample_resources(self) -> None:
         """Only the 2 s timer samples, so CPU is always averaged over the same interval.
@@ -493,18 +489,6 @@ class MainWindow(QMainWindow):
             spare = sizes[0] + sizes[1] - self._workspace.sidebar_width
             self._splitter.setSizes([self._workspace.sidebar_width, spare, *sizes[2:]])
         self._persist()
-
-    def _mute_everything(self) -> None:
-        self._wall.set_listening(None)
-
-    def _refresh_audio_button(self) -> None:
-        """Only reachable in a profile that decodes audio, and only while one is audible."""
-        listening = self._wall.listening
-        self._mute_button.setVisible(self._wall.audio_available)
-        self._mute_button.setEnabled(listening is not None)
-        self._mute_button.setToolTip(self._translator.t("listening", camera=listening.label)
-                                     if listening is not None
-                                     else self._translator.t("mute_all"))
 
     def _show_logs(self) -> None:
         show_log_dialog(self, self._translator, self._cameras)

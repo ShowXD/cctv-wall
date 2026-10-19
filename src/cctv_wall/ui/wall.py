@@ -74,15 +74,13 @@ class VideoTile(QFrame):
     def __init__(self, camera: Camera, translator: Translator,
                  on_solo: Callable[[Camera], None] | None,
                  on_stream_change: Callable[[Camera, int], None] | None,
-                 on_retry: Callable[[Camera], None] | None = None,
-                 on_listen: Callable[[Camera | None], None] | None = None) -> None:
+                 on_retry: Callable[[Camera], None] | None = None) -> None:
         super().__init__()
         self.camera = camera
         self._translator = translator
         self._on_solo = on_solo
         self._on_stream_change = on_stream_change
         self._on_retry = on_retry
-        self._on_listen = on_listen
         self.setObjectName("videoTile")
         self.setMinimumSize(180, 120)
         self.surface = VideoSurface(self._open_solo, self._show_stream_menu)
@@ -90,7 +88,7 @@ class VideoTile(QFrame):
         card = QVBoxLayout(self)
         card.setContentsMargins(1, 1, 1, 1)
         card.addWidget(self.surface, 1)
-        # Same reason as the audio strip below: text on the image itself would be hidden.
+        # A native video surface paints over Qt siblings, so text lives in its own strip.
         self._ai = QLabel()
         self._ai.setObjectName("tileAi")
         self._ai.hide()
@@ -102,14 +100,6 @@ class VideoTile(QFrame):
         self._notice.setCursor(Qt.CursorShape.PointingHandCursor)
         self._notice.hide()
         card.addWidget(self._notice)
-        # A native video surface paints over Qt siblings, so the audio marker lives in
-        # its own strip rather than floating on the image.
-        self._audio = QLabel()
-        self._audio.setObjectName("tileAudio")
-        self._audio.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._audio.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._audio.hide()
-        card.addWidget(self._audio)
         self._set_tooltip()
 
 
@@ -128,13 +118,6 @@ class VideoTile(QFrame):
     def set_playing(self) -> None:
         self._set_tooltip()
         self._notice.hide()
-
-    def set_listening(self, listening: bool) -> None:
-        """Name the one camera whose audio is live, so 16 tiles cannot be confused."""
-        self._audio.setText(f"🔊  {self.camera.label}")
-        self._audio.setVisible(listening)
-        self.setProperty("listening", listening)
-        self._refresh_style(self)
 
     def show_ai_event(self, text: str) -> None:
         """Latest AI result for this camera; the full history lives in the side panel."""
@@ -159,11 +142,6 @@ class VideoTile(QFrame):
             self._on_retry(self.camera)
             event.accept()
             return
-        if (self._on_listen is not None and self._audio.isVisible()
-                and self._audio.geometry().contains(position)):
-            self._on_listen(None)
-            event.accept()
-            return
         super().mousePressEvent(event)
 
     def _open_solo(self) -> None:
@@ -183,11 +161,6 @@ class VideoTile(QFrame):
             action.setEnabled(can_switch)
             action.triggered.connect(lambda _checked=False, value=stream: self._choose_stream(value))
             menu.addAction(action)
-        if self._on_listen is not None:
-            menu.addSeparator()
-            listening = self._audio.isVisible()
-            menu.addAction(self._translator.t("mute_camera" if listening else "listen_camera"),
-                           lambda: self._on_listen(None if listening else self.camera))
         menu.exec(event.globalPos())
 
     def _choose_stream(self, stream: int) -> None:
@@ -250,7 +223,6 @@ class WallView(QWidget):
         self._on_stream_change = on_stream_change
         self._tiles: list[_Tile] = []
         self._focused_tile: _Tile | None = None
-        self._listening: Camera | None = None
         self._pending_starts: list[_Tile] = []
         self._start_timer = QTimer(self)
         self._start_timer.setSingleShot(True)
@@ -310,8 +282,7 @@ class WallView(QWidget):
             # fallback label in the navigation tree, but must never escape into logs.
             log_label = camera.name or f"Camera {index + 1}"
             tile = _Tile(VideoTile(camera, self._translator, self._on_solo,
-                                   self._on_stream_change, self._retry_camera,
-                                   self.set_listening if self._profile.audio else None),
+                                   self._on_stream_change, self._retry_camera),
                          log_label)
             self._tiles.append(tile)
             self._grid.addWidget(tile.view, index // columns, index % columns)
@@ -344,22 +315,6 @@ class WallView(QWidget):
         for index, tile in enumerate(self._tiles):
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.show()
-
-    @property
-    def audio_available(self) -> bool:
-        return self._profile.audio
-
-    @property
-    def listening(self) -> Camera | None:
-        return self._listening
-
-    def set_listening(self, camera: Camera | None) -> None:
-        """At most one camera is audible; everything else stays muted."""
-        self._listening = camera
-        for tile in self._tiles:
-            self._apply_audio(tile)
-        if self._on_health_change is not None:
-            self._on_health_change()
 
     def show_ai_event(self, camera_name: str, text: str) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
@@ -491,7 +446,6 @@ class WallView(QWidget):
             player.play(url, media_options_for(url, camera.quality, self._profile),
                         int(tile.view.surface.winId()))
             tile.player = player
-            self._apply_audio(tile)
             state = player.state()
             self._log_state_change(tile, state)
             if state == PlaybackState.PLAYING:
@@ -505,12 +459,6 @@ class WallView(QWidget):
             reason = redact(str(error))
             logger().warning("camera=%s: %s", tile.log_label, reason)
             tile.view.show_notice(f"{tile.log_label}\n{reason}", "error")
-
-    def _apply_audio(self, tile: _Tile) -> None:
-        audible = self._profile.audio and tile.view.camera == self._listening
-        if tile.player is not None:
-            tile.player.set_muted(not audible)
-        tile.view.set_listening(audible)
 
     @staticmethod
     def _log_state_change(tile: _Tile, state: PlaybackState) -> None:

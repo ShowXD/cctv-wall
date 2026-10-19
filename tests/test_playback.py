@@ -73,7 +73,7 @@ class TestPerformanceProfiles:
 
     def test_a_profile_must_allow_at_least_one_tile(self):
         with pytest.raises(ValueError, match="tiles_per_page"):
-            PerformanceProfile("x", (), (), 0, False)
+            PerformanceProfile("x", (), (), 0)
 
     def test_rtsp_streams_are_forced_over_tcp(self):
         assert ":rtsp-tcp" in media_options_for(RTSP_URL, "auto", LOW_END)
@@ -88,9 +88,9 @@ class TestPerformanceProfiles:
         assert not any("adaptive-maxheight" in option
                        for option in media_options_for(HLS_URL, "auto", FULL))
 
-    def test_audio_is_disabled_unless_the_profile_allows_it(self):
-        assert ":no-audio" in media_options_for(RTSP_URL, "auto", LOW_END)
-        assert ":no-audio" not in media_options_for(RTSP_URL, "auto", FULL)
+    @pytest.mark.parametrize("profile", [LOW_END, FULL])
+    def test_no_profile_decodes_audio(self, profile):
+        assert "--no-audio" in profile.instance_args
 
     def test_profile_options_are_carried_through(self):
         assert ":clock-jitter=0" in media_options_for(RTSP_URL, "auto", LOW_END)
@@ -192,8 +192,7 @@ class TestNullPlayer:
         player.play(RTSP_URL, (":rtsp-tcp",), 42)
         assert player.calls == [(RTSP_URL, (":rtsp-tcp",), 42)]
 
-    def test_release_and_mute_are_observable(self):
+    def test_release_is_observable(self):
         player = NullPlayerFactory().create()
-        player.set_muted(True)
         player.release()
-        assert player.muted and player.released
+        assert player.released

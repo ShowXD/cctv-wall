@@ -55,8 +55,6 @@ class Player(Protocol):
 
     def state(self) -> PlaybackState: ...
 
-    def set_muted(self, muted: bool) -> None: ...
-
     def release(self) -> None: ...
 
 
@@ -89,9 +87,6 @@ class VlcPlayer:
     def state(self) -> PlaybackState:
         name = str(self._player.get_state()).rsplit(".", 1)[-1]
         return _VLC_STATE_NAMES.get(name, PlaybackState.IDLE)
-
-    def set_muted(self, muted: bool) -> None:
-        self._player.audio_set_mute(muted)
 
     def release(self) -> None:
         """Tear down without blocking the Qt event loop on an unhealthy RTSP connection.
@@ -152,7 +147,6 @@ class NullPlayer:
 
     def __init__(self, state: PlaybackState = PlaybackState.PLAYING) -> None:
         self.calls: list[tuple[str, tuple[str, ...], int]] = []
-        self.muted = False
         self.released = False
         self.reported_state = state
 
@@ -161,9 +155,6 @@ class NullPlayer:
 
     def state(self) -> PlaybackState:
         return self.reported_state
-
-    def set_muted(self, muted: bool) -> None:
-        self.muted = muted
 
     def release(self) -> None:
         self.released = True

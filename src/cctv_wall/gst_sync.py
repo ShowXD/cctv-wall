@@ -166,9 +166,6 @@ class GStreamerSyncPlayer:
             return PlaybackState.OPENING
         return PlaybackState.IDLE
 
-    def set_muted(self, _muted: bool) -> None:
-        return  # Strict timestamp mode has no audio branch.
-
     def release(self) -> None:
         if self._pipeline is not None:
             self._pipeline.set_state(self._gst.State.NULL)
