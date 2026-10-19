@@ -438,7 +438,11 @@ class MainWindow(QMainWindow):
         self._reload_sites()
 
     def _on_site_action(self, action: str, site_name: str) -> None:
-        """Route a navigation shortcut, keeping this window the only workspace owner."""
+        """Route a navigation shortcut, keeping this window the only workspace owner.
+
+        An empty site name means "the site on screen" (the sidebar's AI button).
+        """
+        site_name = site_name or self._active_site_name
         if action == "watch":
             self._on_site_selected(site_name)
             return

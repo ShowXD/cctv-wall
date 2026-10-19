@@ -114,10 +114,16 @@ class SiteNavigation(QFrame):
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self._sites, 1)
+        # Two plain entries instead of one "manage" button: someone looking for the AI
+        # connections should not have to guess that they live behind a right-click.
         settings = QPushButton(self._translator.t("manage"))
         settings.setObjectName("settingsButton")
         settings.clicked.connect(on_settings_requested)
         layout.addWidget(settings)
+        self._ai_button = QPushButton(self._translator.t("ai_feeds_action"))
+        self._ai_button.setObjectName("settingsButton")
+        self._ai_button.clicked.connect(lambda: self._on_site_action("ai_feeds", ""))
+        layout.addWidget(self._ai_button)
 
     def set_workspace(self, workspace: Workspace) -> None:
         self._workspace = workspace
@@ -142,6 +148,7 @@ class SiteNavigation(QFrame):
                 self._sites.setCurrentItem(item)
         self._sites.blockSignals(False)
         self._count.setText(str(len(workspace.sites)))
+        self._ai_button.setEnabled(bool(workspace.sites))
 
     def _item_changed(self, current: QTreeWidgetItem | None,
                       _previous: QTreeWidgetItem | None) -> None:
