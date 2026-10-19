@@ -200,7 +200,10 @@ def _release_detached(tiles: Sequence[_Tile]) -> None:
         except Exception as error:
             logger().warning("camera=%s release failed: %s", tile.log_label, error)
         tile.player = None
-        tile.view.deleteLater()
+        try:
+            tile.view.deleteLater()
+        except RuntimeError:
+            pass   # the app quit first and Qt already destroyed the parentless surface
 
 
 def _due_for_retry(tile: _Tile) -> bool:
