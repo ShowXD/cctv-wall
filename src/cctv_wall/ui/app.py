@@ -322,16 +322,11 @@ class MainWindow(QMainWindow):
         self._refresh_status()
 
     def _refresh_ai_panel(self) -> None:
-        """The panel and its toggle exist only for a site with an AI feed configured.
-
-        Focusing a camera hides the other chrome, but the panel stays: an enlarged
-        camera beside its result list is exactly the comparison view.
-        """
+        """The panel and its toggle exist only for a site with an AI feed configured."""
         has_feed = self._ai_panel.has_feed
         self._ai_button.setVisible(has_feed)
-        roomy = self._view.chrome_visible or (self._focused_camera is not None
-                                              and not self._view.fullscreen)
-        self._ai_panel.setVisible(has_feed and roomy and self._ai_button.isChecked())
+        self._ai_panel.setVisible(has_feed and self._view.chrome_visible
+                                  and self._ai_button.isChecked())
 
     def _refresh_status(self) -> None:
         total = len(self._displayed_cameras)
@@ -377,7 +372,13 @@ class MainWindow(QMainWindow):
         self._persist()
 
     def _on_camera_selected(self, site_name: str, camera: Camera) -> None:
-        """Jump to one camera: switch site, turn to its page, then enlarge it."""
+        """Jump to one camera: switch site, turn to its page, then enlarge it.
+
+        Choosing the camera that is already enlarged puts the grid back.
+        """
+        if self._focused_camera == camera and site_name == self._active_site_name:
+            self._toggle_camera_focus(camera)
+            return
         self._exit_camera_focus_if_needed()
         self._on_site_selected(site_name)
         cameras = self._cameras
@@ -550,20 +551,21 @@ class MainWindow(QMainWindow):
         return (self._focused_camera,) if self._focused_camera is not None else self._cameras
 
     def _toggle_camera_focus(self, camera: Camera) -> None:
-        """Reflow an existing tile; focus must never tear down a healthy RTSP session."""
+        """Reflow an existing tile; focus must never tear down a healthy RTSP session.
+
+        Only the wall changes: navigation, toolbar and AI panel stay usable, so the
+        enlarged camera can be compared with its results and left the same way it was entered.
+        """
         if self._focused_camera == camera:
             self._wall.restore_grid()
             self._focused_camera = None
             self._page = self._page_before_focus
-            self._view = self._view.exit_focus()
         else:
             if not self._wall.focus_camera(camera):
                 return
             self._page_before_focus = self._page
             self._focused_camera = camera
             self._page = 0
-            self._view = self._view.enter_focus()
-        self._apply_view_mode()
         self._refresh_status()
 
     def _exit_camera_focus_if_needed(self) -> None:

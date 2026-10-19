@@ -94,16 +94,7 @@ class TestViewMode:
         view = ViewMode().toggle_filled().enter_fullscreen(False).exit_fullscreen()
         assert view.filled and not view.chrome_visible and view.grips_visible
 
-    def test_focus_from_a_normal_wall_returns_to_a_normal_wall(self):
-        focused = ViewMode().enter_focus()
-        assert not focused.chrome_visible
-        assert focused.exit_focus().chrome_visible
-
-    def test_focus_from_a_filled_wall_stays_filled_afterwards(self):
-        focused = ViewMode().toggle_filled().enter_focus()
-        assert focused.exit_focus().filled
-
     def test_transitions_never_mutate_the_previous_value(self):
         view = ViewMode()
-        view.toggle_filled().enter_focus().enter_fullscreen(True)
+        view.toggle_filled().enter_fullscreen(True)
         assert view == ViewMode()

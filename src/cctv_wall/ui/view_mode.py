@@ -15,7 +15,6 @@ class ViewMode:
     fullscreen: bool = False
     filled: bool = False
     was_maximized: bool = False
-    filled_before_focus: bool = False
 
     @property
     def chrome_visible(self) -> bool:
@@ -33,9 +32,3 @@ class ViewMode:
 
     def toggle_filled(self) -> "ViewMode":
         return replace(self, filled=not self.filled)
-
-    def enter_focus(self) -> "ViewMode":
-        return replace(self, filled=True, filled_before_focus=self.filled)
-
-    def exit_focus(self) -> "ViewMode":
-        return replace(self, filled=self.filled_before_focus)
