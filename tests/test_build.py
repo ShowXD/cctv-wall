@@ -101,3 +101,11 @@ class TestPrepare:
     def test_a_fresh_release_directory_is_returned(self, monkeypatch, tmp_path):
         monkeypatch.setattr(build, "RELEASES_DIRECTORY", tmp_path)
         assert build._prepare(_request(label="rc1")).name == build._release_name("rc1")
+
+
+def test_release_names_use_the_pyproject_version():
+    import re
+
+    from cctv_wall.build import _release_name, project_version
+    assert re.fullmatch(r"\d+\.\d+\.\d+", project_version())
+    assert _release_name("site-a") == f"CCTVWall-{project_version()}-site-a"
