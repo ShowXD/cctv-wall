@@ -12,6 +12,7 @@ import pytest
 from cctv_wall.ai_feed import (DEFAULT_DELAY_MS, STATUS_CONNECTED, AiEvent, AiFeedClient,
                                AiFeedConfig, parse_line, parse_time, release_due)
 from cctv_wall.models import Site, Workspace
+from cctv_wall.ui.ai_feed_editor import FeedForm, config_from_form, feeds_from_forms
 
 CONFIG = AiFeedConfig(host="127.0.0.1", port=9000)
 
@@ -205,3 +206,34 @@ class TestClient:
         client._thread.join(5)
         server.close()
         assert not client._thread.is_alive()
+
+
+class TestDialogForm:
+    """The settings dialog's form <-> config conversion, without opening a window."""
+
+    def test_round_trip_keeps_format_and_mapping(self):
+        assert config_from_form(FeedForm.from_config(SAMPLE)) == SAMPLE
+
+    def test_blank_mapping_rows_are_ignored(self):
+        form = FeedForm("h", "9000", 0, [("", ""), ("A001", "Gate")], "")
+        assert config_from_form(form).cameras == (("A001", "Gate"),)
+
+    @pytest.mark.parametrize("mapping,advanced,message", [
+        ([("A001", "")], "", "needs both"),
+        ([("A001", "Gate"), ("A001", "Lobby")], "", "mapped twice"),
+        ([], "{not json", "not valid JSON"),
+        ([], "[]", "must be a JSON object"),
+        ([], '{"camera_kye": "x"}', "unknown advanced setting"),
+    ])
+    def test_invalid_forms(self, mapping, advanced, message):
+        with pytest.raises(ValueError, match=message):
+            config_from_form(FeedForm("h", "9000", 0, mapping, advanced))
+
+    def test_site_rules_apply_across_connections(self):
+        forms = [FeedForm("h1", "1", 0, [("A001", "Gate")]), FeedForm("h2", "1", 0, [("A001", "Gate")])]
+        with pytest.raises(ValueError, match="mapped more than once"):
+            feeds_from_forms("Lab", (), forms)
+
+    def test_the_failing_connection_is_named(self):
+        with pytest.raises(ValueError, match="#2 h2: ai_feed port"):
+            feeds_from_forms("Lab", (), [FeedForm("h1", "1"), FeedForm("h2", "99999")])

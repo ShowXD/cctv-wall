@@ -18,6 +18,7 @@ from cctv_wall import vendors
 from cctv_wall.i18n import Translator
 from cctv_wall.ai_feed import AiFeedConfig
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera, Site, Workspace
+from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
 from cctv_wall.urls import display_url
 
 PRIMARY_TEXT_FIELDS = ("name", "url")
@@ -41,7 +42,7 @@ class _SiteDraft:
 
     name: str
     cameras: list[Camera] = field(default_factory=list)
-    ai_feeds: tuple[AiFeedConfig, ...] = ()  # 只能在 workspace.json 編輯；這裡原樣帶過去
+    ai_feeds: tuple[AiFeedConfig, ...] = ()  # 由「AI 辨識連線…」對話框編輯
 
 
 class _CenteredTreeEditorDelegate(QStyledItemDelegate):
@@ -299,6 +300,7 @@ class WorkspaceEditor(QDialog):
             menu.addAction(self._translator.t("add_camera"), self._add_camera)
             menu.addAction(self._translator.t("duplicate_selected"), self._duplicate_selected)
             menu.addAction(self._translator.t("rename_site"), self._rename_selected_site)
+            menu.addAction(self._translator.t("ai_feeds_action"), self._edit_ai_feeds)
             self._add_move_actions(menu)
             menu.addSeparator()
             menu.addAction(self._translator.t("delete"), self._delete_selected)
@@ -495,6 +497,15 @@ class WorkspaceEditor(QDialog):
         self._selected_camera = len(cameras) - 1
         self._reload_tree()
         self._select(self._selected_site, self._selected_camera)
+
+    def _edit_ai_feeds(self) -> None:
+        """Takes effect with the rest of the draft when Save is pressed."""
+        if self._selected_site is None:
+            return
+        site = self._draft[self._selected_site]
+        feeds = edit_ai_feeds(self, self._translator, site.name, site.cameras, site.ai_feeds)
+        if feeds is not None:
+            site.ai_feeds = feeds
 
     def _increment_ip(self) -> None:
         """Advance an IPv4/IPv6 address in the form without touching its other fields."""

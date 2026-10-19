@@ -39,6 +39,7 @@ SITE_COMMANDS = {
     "duplicate": site_commands.duplicate_site,
     "rename": site_commands.rename_site,
     "delete": site_commands.delete_site,
+    "ai_feeds": site_commands.edit_site_ai_feeds,
 }
 
 

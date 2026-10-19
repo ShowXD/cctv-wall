@@ -182,6 +182,7 @@ class SiteNavigation(QFrame):
             self._add_action(menu, self._translator.t("add_camera_action"), "add_camera", site_name)
             self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
             self._add_action(menu, self._translator.t("rename"), "rename", site_name)
+            self._add_action(menu, self._translator.t("ai_feeds_action"), "ai_feeds", site_name)
             menu.addSeparator()
             self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
         else:
