@@ -21,6 +21,7 @@ src/cctv_wall/
   vlc_runtime.py  打包後把 python-vlc 指向包內的 libvlc
   gst_sync.py     GStreamer 嚴格時間戳同步後端
   sync_probe.py   逐台攝影機探測 RTCP Sender Report 可用性
+  ai_feed.py      AI 結果 TCP 來源：NDJSON 解析、攝影機對照／略過規則／代碼文字、顯示延遲、斷線重連（不碰 Qt）
   build.py        版本化單一 EXE 發行包建置（build cctv-wall）
   ui/theme.py         全站 Qt 視覺主題，明／暗兩套（不含任何行為）
   ui/navigation.py    左側地點／攝影機樹狀導覽：只顯示、切換與排序，決策全部往上委派
@@ -28,6 +29,7 @@ src/cctv_wall/
   ui/editor.py        Qt 設定視窗：編輯拋棄式草稿，只在儲存時產出新的 Workspace
   ui/site_commands.py 地點層級指令（複製／改名／刪除）：回傳新的 Workspace 或 None
   ui/logs.py          事件紀錄檢視對話框（唯讀）
+  ui/ai_panel.py      AI 結果側欄：把 socket 執行緒的事件轉回 GUI、延遲後分派到畫格
   ui/startup.py       啟動進度畫面
   ui/app.py           Qt 主視窗：組裝上述元件、持有 Workspace 並負責記憶
   __main__.py     進入點：唯一知道真實實作的地方（--check / --dry-run）
@@ -39,6 +41,7 @@ tests/
   test_reconnect.py    斷線重連的退避節奏（不需要 QApplication）
   test_sync.py         GStreamer 管線元件與凍結環境的 PATH 行為
   test_build.py        發行名稱清理與建置流程
+  test_ai_feed.py      AI 結果解析、時間格式、延遲釋放、本機 loopback 連線與重連
 cctv_wall.spec    PyInstaller 打包設定
 ```
 
@@ -53,6 +56,7 @@ cctv_wall.spec    PyInstaller 打包設定
 | 加新的效能檔 | `performance.py` 加一個 `PerformanceProfile` |
 | 加地點層級的操作 | `ui/site_commands.py` 加一個函式，並在 `app.SITE_COMMANDS` 加一列 |
 | 加介面語言 | `models.SUPPORTED_LANGUAGES` 與 `i18n._MESSAGES` 各加一項（測試會強制鍵對齊） |
+| 改 AI 結果的訊息格式 | `ai_feed.parse_line`（連線與顯示不用動） |
 | 改視覺樣式 | `ui/theme.py`（明暗各一份明碼 CSS，刻意不抽模板以便一眼掃完） |
 
 ---
