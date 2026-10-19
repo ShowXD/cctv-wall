@@ -4,7 +4,7 @@
 
 ```bash
 uv sync                                 # 建立環境
-uv run --group dev pytest -q            # 應為 154 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q            # 應為 222 passed（不需要 VLC、不連網）
 uv run cctv-wall --dry-run              # 用假後端建整個 GUI 後立刻結束
 ```
 
@@ -13,7 +13,7 @@ uv run cctv-wall --dry-run              # 用假後端建整個 GUI 後立刻結
 ## 送 PR 之前
 
 - [ ] `uv run --group dev pytest -q` 全綠
-- [ ] `git status` 沒有 `workspace.json`（含明碼密碼，見 [SECURITY.md](SECURITY.md)）
+- [ ] `git status` 沒有 `workspace.json`（含攝影機網址與帳號，見 [SECURITY.md](SECURITY.md)）
 - [ ] 改了行為就順手更新 README／`docs/`
 
 README 與程式碼不同步已經發生過兩次。最容易過期的是：**測試數量、exe 體積、
@@ -30,7 +30,7 @@ README 與程式碼不同步已經發生過兩次。最容易過期的是：**�
 
 依賴方向單向朝內，**不要打破**：
 
-- 領域層（`models` / `urls` / `vendors` / `quality` / `layout`）不 import Qt 或 VLC
+- 領域層（`models` / `urls` / `vendors` / `layout`）不 import Qt 或 VLC
 - `repository.py` 是唯一碰硬碟的檔案
 - `player.py` 是唯一 `import vlc` 的檔案
 - 不可變模型在建構時就完成驗證

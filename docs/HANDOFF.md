@@ -4,20 +4,20 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-10-19（AI 結果 TCP 對照）
+> 最後更新：2026-10-19（介面改版與功能精簡）
 
 ---
 
 ## 一句話
 
-多地點 Qt 影像牆：RTSP 監視器 / 本機影片 / YouTube 混播，主打低階電腦，
-可打包成單一 exe。兩套播放後端：VLC（一般）與 GStreamer（嚴格時間戳同步）。
+多地點 Qt 影像牆：RTSP 監視器 / 本機影片，主打低階電腦，可打包成單一 exe。
+兩套播放後端：VLC（一般）與 GStreamer（嚴格時間戳同步）。影像一律靜音。
 
 ## 環境與常用指令
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 238 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 222 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **238 passed**（2026-10-19，`uv run --frozen --group dev python -m pytest -q`） |
+| 測試 | **222 passed**（2026-10-19，分支 `refactor/ui-redesign`，`.venv/Scripts/python -m pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -39,10 +39,40 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
-## 2026-10-19：AI 結果 TCP 對照（分支 `feature/ai-feed`）
+## 2026-10-19：介面改版與功能精簡（分支 `refactor/ui-redesign`）
 
-**狀態：已實作、已驗證，已在 `feature/ai-feed` 分 3 個 commit（領域層／介面／文件），尚未 push 或合併。**
-下一步：以實際 AI 端連線現場校準各連線的 `delay_ms`，並確認第二條連線的攝影機識別值。
+**狀態：已實作、已驗證，依功能分批 commit 在 `refactor/ui-redesign`（從 `main` 開出），尚未合併、未 push。**
+下一步：使用者確認後合併回 `main`；之後可考慮讓工具列 `AI` 按鈕常駐（入口目前只在地點右鍵）。
+
+使用者逐項檢視功能清單後的決定與實作：
+
+- 側欄／設定樹破圖：Windows 11 原生樣式把選取色塊畫進縮排欄，QSS 管不到。改為 `ui/flat_tree.py`
+  關掉縮排欄、在列內自畫縮排與箭頭（側欄與設定視窗共用）。換 Fusion 樣式或 `::branch` 規則都試過無效。
+- 側欄可拉寬／隱藏並記住（`Workspace.sidebar_width`、`sidebar_visible`）；快捷鍵 Ctrl+B、PgUp/PgDn、
+  Ctrl+PgUp/PgDn、F5。
+- 點攝影機「一放大就全畫面、無法操作」：根因是聚焦模式設了 `filled`，連側欄工具列一起藏。聚焦已與
+  `ViewMode` 脫鉤，只改影像牆。
+- 頁首與狀態列合併為單一頂部列；CPU 只由 2 秒計時器取樣（先前每次刷新都取樣，數字會跳）。
+- 移除聲音（VLC `--no-audio`）、三種效能檔（改為 `tiles_per_page` 數字欄位＋`max_tiles` 上限，舊值
+  low_end/balanced/full → 4/9/16）、YouTube 與 yt-dlp（`resolvers.py` 整層移除）、畫質（`quality.py`）。
+- 攝影機只剩 `name/url/user/password`；帳密不放網址、播放時才組入。舊的 host/vendor/stream 設定在載入時
+  轉成網址（`vendors.py` 只為此保留）。未命名攝影機顯示網址時不帶帳密（先前側欄會直接顯示密碼）。
+- 設定視窗不再有草稿：每個動作立即存檔，關閉時影像牆才重連一次。第 8（攝影機模型）與第 9（設定視窗）步
+  合成一個 commit，因為舊表單無法搭配新模型運作。
+- 另修：發行資料夾版本改讀 `pyproject.toml`（先前誤標 0.2.0）；DPAPI 解密失敗保留原密文（先前存檔會清空
+  密碼）；啟動失敗在無主控台的 exe 改跳對話框並寫紀錄。
+- 去重複：唯一地點名稱 → `Workspace.unique_site_name`；收合狀態 → `FlatTree.collapsed_top_level_texts`。
+- 驗證：222 passed；以腳本實際開主視窗與設定視窗操作截圖確認（側欄選取、拉寬記憶、聚焦、頂部列、格數排版、
+  設定視窗新增／改名／刪除／上限／錯誤提示）；以唯讀方式載入使用者現有 `workspace.json`（Demo 4 台）確認轉換正確。
+- 已知：分支建立時使用者正在執行程式，`.venv` 的 `cctv-wall.exe` 被鎖住，`uv sync` 無法完成；
+  測試改用 `.venv/Scripts/python -m pytest`。程式關閉後執行一次 `uv sync` 即可恢復（會移除 yt-dlp）。
+- 未做：計畫中 B6–B8（嚴格同步說明與實際檢查不一致、嚴格同步的聆聽選單已隨聲音移除、AI 結果條不會自動清除）
+  只有 B7 已因移除聲音而消失；D3（播放器釋放邏輯兩份）、D4（兩個建置指令進入點）未處理。
+
+## 2026-10-19：AI 結果 TCP 對照
+
+**狀態：已實作、已驗證，`feature/ai-feed` 已合併回 `main`（`4fbbe14`），尚未 push。**
+現場仍需以實際 AI 端校準各連線的 `delay_ms`，並確認第二條連線的攝影機識別值。
 
 - 需求：部分專案的 AI 端以 TCP 回傳辨識結果（文字事件/數值），要和影像對照，且時間要對上。
 - 實際專案：**2 條 TCP 連線，每條帶 2 台攝影機**，訊息如
@@ -76,14 +106,12 @@ uv run build cctv-wall         # 打包（一律 onefile）
   介面設定（238 passed，新增表單轉換測試）：實際操作對話框新增第二條連線，格式正確沿用、切換連線不遺失輸入、
   確定後產出兩條正確設定；左側欄右鍵路徑會存檔並讓側欄連線，設定視窗路徑在儲存後寫入。
 - 介面設定：`ui/ai_feed_editor.AiFeedsDialog`，從左側欄地點右鍵（`site_commands.edit_site_ai_feeds`，
-  立即存檔）或設定視窗地點右鍵（寫入草稿，按儲存才生效）開啟。IP／port／延遲／攝影機對照用表單；
+  立即存檔）或設定視窗地點右鍵（同樣立即存檔，見下方介面改版）開啟。IP／port／延遲／攝影機對照用表單；
   `camera_key`/`time_key`/`skip`/`skip_empty`/`labels` 屬於「換專案才改」的訊息格式，刻意用 JSON 文字框，
   新增連線時沿用所選連線的格式。表單→設定的驗證在 `config_from_form`／`feeds_from_forms`（有測試）。
 - 刻意沒做：bbox 疊框（需透明頂層視窗）、本程式當 TCP server、非 JSON 格式、事件匯出。
-- 注意：本分支的 `uv.lock` 仍是舊版（版本寫 0.2.0），`uv run` 會自動改寫它一次。已在 `main` 以
-  `01d2cc3 chore: 更新 uv.lock 至 0.4.0` 修正（實測更新後的 lock 再跑 `uv run`／`uv lock --check` 都不再變動）；
-  本分支合併或 rebase 到 `main` 後即消失，在那之前改寫出來的 `uv.lock` 不要 commit 進本分支。
-  之後升版號要同時跑 `uv lock` 並一起 commit。
+- `uv.lock` 曾停在 0.2.0，導致每次第一次 `uv run` 都會自動改寫它；已由 `01d2cc3 chore: 更新 uv.lock 至 0.4.0`
+  修正，合併後在 `main` 實測 `uv run` 不再變動 lock。之後升版號要同時跑 `uv lock` 並一起 commit。
 
 ## 這一輪（2026-08-06 下午）改了什麼
 
@@ -129,7 +157,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 | `#` 註解 | 8 行 | **85 行** |
 | docstring | 31 個 | **138 個** |
 
-**已完成的檔案**：`layout.py`、`quality.py`、`vendors.py`、`vlc_runtime.py`、
+**已完成的檔案**：`layout.py`、`vendors.py`、`vlc_runtime.py`、
 `models.py`（其模組層 docstring 仍是英文，漏掉了）。
 `ui/wall.py`、`ui/editor.py` 只有這次新寫的部分是中文，舊程式仍是英文。
 
@@ -199,9 +227,9 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 - `tests/test_sync.py` 比對 `REQUIRED_ELEMENTS` 與 `play()` 實際建構的元件，
   改管線要同步兩邊。
 
-### 7. 效能檔對嚴格同步無效
+### 7. VLC 調校參數對嚴格同步無效
 
-`build(profile, strict_sync=True)` 會忽略 `profile`——那些是 libvlc 專屬選項。
+`performance.py` 的 `INSTANCE_ARGS`／`STREAM_OPTIONS` 是 libvlc 專屬選項，嚴格同步（GStreamer）用不到。
 開啟嚴格同步後只剩「每頁格數」有作用，GPU 解碼／跳 loop filter 全部不生效。
 介面上看不出來，也還沒在 UI 說明。
 
@@ -228,7 +256,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 抽成 `ui/sync_control.py`，比照 `site_commands.py` 的做法（回傳新狀態、由
 `MainWindow` 套用與持久化），這樣才可測。
 
-其餘分層仍乾淨：領域層（`models`/`urls`/`vendors`/`quality`/`layout`）不依賴 Qt 或 VLC，
+其餘分層仍乾淨：領域層（`models`/`urls`/`vendors`/`layout`）不依賴 Qt 或 VLC，
 `repository.py` 是唯一碰硬碟的檔，`player.py` 是唯一 `import vlc` 的檔。
 
 ### C. GUI 介面改善
@@ -252,8 +280,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 | plugin `bin/` 支援 DLL | ~36 MB | **不能砍，見陷阱 3**：Win10 目標機的影像轉譯不正常，全靠這條軟體解碼後路 |
 | `opengl32sw.dll` | 20 MB | Qt 軟體 OpenGL 後援。純 Widgets 理論上不需要，但本專案主打低階電腦，顯卡驅動不全時可能真的會退回它——要實機測 |
 | `gstreamer_plugins_gpl_restricted` | 23 MB | 含 x264/x265（編碼器，播放用不到）。另有散布 GPL 的授權問題值得確認 |
-| yt-dlp extractors | ~7 MB | 2098 個檔只需要 youtube + generic；省得不多但會拖慢 onefile 解壓 |
-| **只留 GStreamer、砍掉 VLC** | **136 MB** | 架構級重寫：`player.py` 整支、`performance.py` 三種效能檔（全是 libvlc 選項）、`resolvers.py` 的 YouTube 串接都要改。GStreamer 功能上是 VLC 的超集，但工程量與回歸風險都大 |
+| **只留 GStreamer、砍掉 VLC** | **136 MB** | 架構級重寫：`player.py` 整支、`performance.py` 的 libvlc 調校都要改。GStreamer 功能上是 VLC 的超集，但工程量與回歸風險都大 |
 
 ---
 
@@ -278,7 +305,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **154 passed**。
+2. `uv run --group dev pytest -q` → 應為 **222 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。
