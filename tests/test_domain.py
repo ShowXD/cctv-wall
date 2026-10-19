@@ -102,6 +102,9 @@ class TestCameraValidation:
         assert Camera(url="C:/a.mp4").label == "C:/a.mp4"
         assert camera().label == "10.0.0.5:554"
 
+    def test_label_never_shows_credentials_from_the_url(self):
+        assert Camera(url="rtsp://admin:secret@10.0.0.9:554/s1").label == "rtsp://10.0.0.9:554/s1"
+
 
 class TestBuildUrl:
     def test_direct_url_wins_over_rtsp_fields(self):
