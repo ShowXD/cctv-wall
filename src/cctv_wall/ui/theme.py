@@ -7,7 +7,7 @@ QSplitter::handle { background: #202938; width: 1px; }
 
 QFrame#siteNavigation { background: #151c28; border: 0; }
 QLabel#productName { color: #f5f8fc; font-size: 16pt; font-weight: 750; letter-spacing: 2px; }
-QLabel#productSubtitle, QLabel#eyebrow, QLabel#navigationLabel, QLabel#controlLabel {
+QLabel#eyebrow, QLabel#navigationLabel, QLabel#controlLabel {
     color: #7f91aa; font-size: 9pt; font-weight: 700; letter-spacing: 1.2px;
 }
 QLabel#countBadge { color: #a8b8cd; background: #253247; border-radius: 9px; padding: 1px 7px; }
@@ -81,7 +81,7 @@ QMainWindow, QDialog { background: #f4f7fb; color: #172235; }
 QSplitter::handle { background: #d4dce7; width: 1px; }
 QFrame#siteNavigation { background: #ffffff; border: 0; }
 QLabel#productName { color: #13243b; font-size: 16pt; font-weight: 750; letter-spacing: 2px; }
-QLabel#productSubtitle, QLabel#eyebrow, QLabel#navigationLabel, QLabel#controlLabel { color: #667992; font-size: 9pt; font-weight: 700; letter-spacing: 1.2px; }
+QLabel#eyebrow, QLabel#navigationLabel, QLabel#controlLabel { color: #667992; font-size: 9pt; font-weight: 700; letter-spacing: 1.2px; }
 QLabel#countBadge { color: #40546d; background: #e8eef5; border-radius: 9px; padding: 1px 7px; }
 QTreeWidget#siteList { background: transparent; color: #34475f; border: 0; outline: 0; padding: 0; }
 QTreeWidget#siteList::item { border-radius: 7px; padding: 9px 8px; margin: 1px 0; }

@@ -62,8 +62,7 @@ class SiteNavigation(QFrame):
                  on_reorder: Callable[[Workspace], None] | None = None) -> None:
         super().__init__()
         self.setObjectName("siteNavigation")
-        self.setMinimumWidth(196)
-        self.setMaximumWidth(260)
+        self.setMinimumWidth(160)
         self._on_site_selected = on_site_selected
         self._translator = translator
         self._on_site_action = on_site_action
@@ -79,10 +78,7 @@ class SiteNavigation(QFrame):
         product = QLabel("CCTV  WALL")
         product.setObjectName("productName")
         layout.addWidget(product)
-        subtitle = QLabel(self._translator.t("product_subtitle"))
-        subtitle.setObjectName("productSubtitle")
-        layout.addWidget(subtitle)
-        layout.addSpacing(18)
+        layout.addSpacing(6)
         section = QHBoxLayout()
         label = QLabel(self._translator.t("sites"))
         label.setObjectName("navigationLabel")

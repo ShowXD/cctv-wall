@@ -69,12 +69,19 @@ class MainWindow(QMainWindow):
         self._restore_geometry(workspace.geometry)
         self._build_ui()
         self._grips = FramelessGrips(self)
+        self._apply_view_mode()
         self._reload_sites()
         self._resource_timer = QTimer(self)
         self._resource_timer.timeout.connect(self._refresh_resources)
         self._resource_timer.start(2000)
         QShortcut(QKeySequence("F11"), self, activated=self._toggle_wall_fullscreen)
         QShortcut(QKeySequence("Escape"), self, activated=self._exit_immersive_mode)
+        QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_sidebar)
+        QShortcut(QKeySequence("PgUp"), self, activated=self._previous_page)
+        QShortcut(QKeySequence("PgDown"), self, activated=self._next_page)
+        QShortcut(QKeySequence("Ctrl+PgUp"), self, activated=lambda: self._step_site(-1))
+        QShortcut(QKeySequence("Ctrl+PgDown"), self, activated=lambda: self._step_site(1))
+        QShortcut(QKeySequence("F5"), self, activated=self._show_current_page)
 
     @property
     def _site(self) -> Site | None:
@@ -114,7 +121,8 @@ class MainWindow(QMainWindow):
             on_camera_chosen=lambda camera: self._on_camera_selected(self._active_site_name, camera))
         splitter.addWidget(self._monitor_panel())
         splitter.addWidget(self._ai_panel)
-        splitter.setSizes([260, 1180, 300])
+        splitter.setSizes([self._workspace.sidebar_width, 1180, 300])
+        self._splitter = splitter
         self.setCentralWidget(splitter)
         self._status = QStatusBar()
         self._status.setSizeGripEnabled(False)
@@ -204,7 +212,7 @@ class MainWindow(QMainWindow):
         visible = self._view.chrome_visible
         if visible and not self._view.fullscreen:
             self._set_wall_frameless(False)
-        self._navigation.setVisible(visible)
+        self._navigation.setVisible(visible and self._workspace.sidebar_visible)
         self._monitor_header_widget.setVisible(visible)
         self._control_bar_widget.setVisible(visible)
         self.statusBar().setVisible(visible)
@@ -231,6 +239,8 @@ class MainWindow(QMainWindow):
         layout_box = QHBoxLayout(bar)
         layout_box.setContentsMargins(12, 8, 12, 8)
         layout_box.setSpacing(8)
+        layout_box.addWidget(self._button("☰", self._translator.t("toggle_sidebar"),
+                                          self._toggle_sidebar, "compactAction"))
         layout_box.addWidget(self._button("‹", self._translator.t("previous"), self._previous_page, "pageControl"))
         self._page_label = QLabel()
         self._page_label.setObjectName("pageLabel")
@@ -453,6 +463,8 @@ class MainWindow(QMainWindow):
             return
         self._workspace = self._workspace.with_language(str(language))
         self._translator = Translator(self._workspace.language)
+        self._workspace = self._workspace.with_sidebar(self._sidebar_width(),
+                                                       self._workspace.sidebar_visible)
         self._persist()
         self._wall.stop()
         self._ai_panel.stop()
@@ -473,6 +485,30 @@ class MainWindow(QMainWindow):
         last_page = self._wall.page_count(len(self._displayed_cameras)) - 1
         self._page = min(last_page, self._page + 1)
         self._show_current_page()
+
+    def _step_site(self, step: int) -> None:
+        names = self._workspace.site_names
+        if not names:
+            return
+        current = names.index(self._active_site_name) if self._active_site_name in names else 0
+        self._on_site_selected(names[(current + step) % len(names)])
+        self._navigation.set_workspace(self._workspace)
+
+    def _sidebar_width(self) -> int:
+        """The splitter knows the dragged width only while the sidebar is on screen."""
+        if self._navigation.isVisible():
+            return self._splitter.sizes()[0]
+        return self._workspace.sidebar_width
+
+    def _toggle_sidebar(self) -> None:
+        self._workspace = self._workspace.with_sidebar(self._sidebar_width(),
+                                                       not self._workspace.sidebar_visible)
+        self._apply_view_mode()
+        if self._workspace.sidebar_visible:
+            sizes = self._splitter.sizes()
+            spare = sizes[0] + sizes[1] - self._workspace.sidebar_width
+            self._splitter.setSizes([self._workspace.sidebar_width, spare, *sizes[2:]])
+        self._persist()
 
     def _mute_everything(self) -> None:
         self._wall.set_listening(None)
@@ -594,7 +630,8 @@ class MainWindow(QMainWindow):
         self._resource_timer.stop()
         if persist:
             self._workspace = self._workspace.with_geometry(
-                f"{self.width()}x{self.height()}+{self.x()}+{self.y()}")
+                f"{self.width()}x{self.height()}+{self.x()}+{self.y()}").with_sidebar(
+                self._sidebar_width(), self._workspace.sidebar_visible)
             self._persist()
         self._ai_panel.stop()
         self._wall.stop()

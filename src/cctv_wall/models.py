@@ -26,6 +26,9 @@ NAME_LIMIT = 48
 SCHEMA_VERSION = 1
 DEFAULT_PERFORMANCE = "low_end"
 DEFAULT_GEOMETRY = "1280x800"
+DEFAULT_SIDEBAR_WIDTH = 260
+MIN_SIDEBAR_WIDTH = 160
+MAX_SIDEBAR_WIDTH = 800
 DEFAULT_LANGUAGE = "zh_TW"
 SUPPORTED_LANGUAGES = frozenset({"zh_TW", "en"})
 
@@ -43,6 +46,15 @@ def _number(value: Any, default: int, field: str) -> int:
         return int(text)
     except ValueError as e:
         raise ValueError(f"{field} must be a whole number, got {text!r}") from e
+
+
+def _sidebar_width(value: Any) -> int:
+    """側欄寬度只是版面偏好：壞值退回預設，超出範圍就夾住，不讓整個設定檔載入失敗。"""
+    try:
+        width = int(_text(value) or DEFAULT_SIDEBAR_WIDTH)
+    except ValueError:
+        return DEFAULT_SIDEBAR_WIDTH
+    return min(max(width, MIN_SIDEBAR_WIDTH), MAX_SIDEBAR_WIDTH)
 
 
 def _flag(value: Any) -> bool:
@@ -191,6 +203,8 @@ class Workspace:
     geometry: str = DEFAULT_GEOMETRY
     language: str = DEFAULT_LANGUAGE
     strict_sync: bool = False
+    sidebar_width: int = DEFAULT_SIDEBAR_WIDTH
+    sidebar_visible: bool = True
 
     def site(self, name: str) -> Site | None:
         return next((s for s in self.sites if s.name == name), None)
@@ -229,6 +243,8 @@ class Workspace:
             geometry=_text(raw.get("geometry")) or DEFAULT_GEOMETRY,
             language=language if language in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE,
             strict_sync=_flag(raw.get("strict_sync", False)),
+            sidebar_width=_sidebar_width(raw.get("sidebar_width")),
+            sidebar_visible=_flag(raw.get("sidebar_visible", True)),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -239,6 +255,8 @@ class Workspace:
             "geometry": self.geometry,
             "language": self.language,
             "strict_sync": self.strict_sync,
+            "sidebar_width": self.sidebar_width,
+            "sidebar_visible": self.sidebar_visible,
             "sites": [s.as_dict() for s in self.sites],
         }
 
@@ -273,6 +291,9 @@ class Workspace:
         """設定支援的介面語言；設定檔壞掉時安全退回繁體中文。"""
         return replace(self, language=language if language in SUPPORTED_LANGUAGES
                        else DEFAULT_LANGUAGE)
+
+    def with_sidebar(self, width: int, visible: bool) -> "Workspace":
+        return replace(self, sidebar_width=_sidebar_width(width), sidebar_visible=visible)
 
     def with_strict_sync(self, enabled: bool) -> "Workspace":
         """記住 RTSP 影像牆是否要使用支援 NTP 時間戳的播放後端。"""

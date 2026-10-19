@@ -159,3 +159,13 @@ class TestPasswordProtection:
     def test_an_empty_password_stays_empty(self, tmp_path):
         stored = self._saved(tmp_path, "")
         assert stored["sites"][0]["cameras"][0]["password"] == ""
+
+
+class TestSidebarPreference:
+    def test_width_and_visibility_survive_a_round_trip(self):
+        workspace = Workspace().with_sidebar(420, False)
+        assert Workspace.from_raw(workspace.as_dict()) == workspace
+
+    @pytest.mark.parametrize("raw,expected", [(None, 260), ("wide", 260), (40, 160), (5000, 800)])
+    def test_a_bad_width_falls_back_or_is_clamped(self, raw, expected):
+        assert Workspace.from_raw({"sidebar_width": raw}).sidebar_width == expected
