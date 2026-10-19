@@ -336,22 +336,23 @@ class MainWindow(QMainWindow):
         self._show_resources()
 
     def _show_resources(self) -> None:
+        """The bar says how much of the whole PC the wall uses; the detail waits in the tooltip."""
         usage = self._usage
         unknown = self._translator.t("usage_unknown")
-        cpu = self._cpu_text(usage, unknown) if usage is not None else unknown
+        cpu = unknown
+        if usage is not None and usage.cpu_percent is not None:
+            share = usage.machine_percent if usage.machine_percent is not None else usage.cpu_percent
+            cpu = f"{share:.0f}%"
         memory = (f"{usage.memory_mebibytes:.0f} MB"
                   if usage is not None and usage.memory_mebibytes is not None else unknown)
-        self._resource_status.setText(self._translator.t(
-            "usage", players=self._wall.allocated_player_count, cpu=cpu, memory=memory))
-
-    def _cpu_text(self, usage: ProcessUsage, unknown: str) -> str:
-        """Say how many cores the wall is worth, not just a number that passes 100%."""
-        if usage.cpu_percent is None:
-            return unknown
-        if usage.machine_percent is None:
-            return f"{usage.cpu_percent:.0f}%"
-        return self._translator.t("cpu_cores", cores=usage.cores_used,
-                                  total=usage.core_count, percent=usage.machine_percent)
+        self._resource_status.setText(self._translator.t("usage", cpu=cpu, memory=memory))
+        players = self._wall.allocated_player_count
+        if usage is not None and usage.cores_used is not None:
+            tip = self._translator.t("usage_tip", players=players, cores=usage.cores_used,
+                                     total=usage.core_count)
+        else:
+            tip = self._translator.t("players_tip", players=players)
+        self._resource_status.setToolTip(tip)
 
     def _on_site_selected(self, site_name: str) -> None:
         """Choosing the site on screen again (e.g. arrowing back onto its row) restores the grid."""
