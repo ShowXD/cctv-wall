@@ -106,7 +106,7 @@ class VideoTile(QFrame):
         self._set_tooltip()
         # Transient buffering is normal for CCTV streams.  Only show a panel when an
         # operator needs to act, otherwise preserve every pixel for video.
-        if level != "error":
+        if level not in ("error", "sync"):
             self._notice.hide()
             return
         self._notice.setText(message)
@@ -120,7 +120,7 @@ class VideoTile(QFrame):
 
     def set_camera(self, camera: Camera) -> None:
         """Show an edited camera in this card; a renamed camera's old AI result no longer applies."""
-        if camera.name != self.camera.name:
+        if camera.label != self.camera.label:
             self._ai.hide()
         self.camera = camera
         self._set_tooltip()
@@ -155,7 +155,7 @@ class VideoTile(QFrame):
             self._on_solo(self.camera)
 
     def _show_stream_menu(self, event: QContextMenuEvent) -> None:
-        menu = QMenu(self)
+        menu = QMenu(self.window())   # see SiteNavigation._show_context_menu
         menu.setTitle(self.camera.label)
         # Only a URL that names its stream (".../stream2", "?stream=2") can be switched;
         # guessing a vendor's URL format would break the camera instead.
@@ -169,6 +169,7 @@ class VideoTile(QFrame):
             action.triggered.connect(lambda _checked=False, value=stream: self._choose_stream(value))
             menu.addAction(action)
         menu.exec(event.globalPos())
+        menu.deleteLater()
 
     def _choose_stream(self, stream: int) -> None:
         if (self._on_stream_change is not None
@@ -199,7 +200,10 @@ def _release_detached(tiles: Sequence[_Tile]) -> None:
         except Exception as error:
             logger().warning("camera=%s release failed: %s", tile.log_label, error)
         tile.player = None
-        tile.view.deleteLater()
+        try:
+            tile.view.deleteLater()
+        except RuntimeError:
+            pass   # the app quit first and Qt already destroyed the parentless surface
 
 
 def _due_for_retry(tile: _Tile) -> bool:
@@ -337,7 +341,7 @@ class WallView(QWidget):
     def show_ai_event(self, camera_name: str, text: str) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
         for tile in self._tiles:
-            if tile.view.camera.name == camera_name:
+            if tile.view.camera.label == camera_name:
                 tile.view.show_ai_event(text)
 
     def stop(self) -> None:
@@ -447,7 +451,7 @@ class WallView(QWidget):
                 continue
             explanation = STATE_EXPLANATION_KEYS.get(state, "not_playing")
             if state not in DEAD_STATES:
-                tile.view.show_notice(self._translator.t(explanation), "warning")
+                self._show_opening(tile)
                 continue
             retried = self._advance_reconnect(tile)
             tile.view.show_notice(self._outage_message(tile, explanation, retried), "error")
@@ -475,6 +479,13 @@ class WallView(QWidget):
         if not still_opening:
             self._playback_timer.stop()
 
+    def _show_opening(self, tile: _Tile) -> None:
+        """Strict sync holds every picture for its shared delay, so say why the tile is still empty."""
+        if getattr(self._factory, "synchronized", False):
+            tile.view.show_notice(self._translator.t("syncing"), "sync")
+        else:
+            tile.view.show_notice(self._translator.t("connection_waiting"), "warning")
+
     def _start(self, tile: _Tile) -> None:
         player: Player | None = None
         try:
@@ -489,6 +500,8 @@ class WallView(QWidget):
             self._log_state_change(tile, state)
             if state == PlaybackState.PLAYING:
                 tile.view.set_playing()
+            else:
+                self._show_opening(tile)
         except (PlaybackError, ValueError, OSError) as error:
             if player is not None:
                 try:

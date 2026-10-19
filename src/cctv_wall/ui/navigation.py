@@ -122,7 +122,7 @@ class SiteNavigation(QFrame):
         settings.setObjectName("settingsButton")
         settings.clicked.connect(on_settings_requested)
         layout.addWidget(settings)
-        self._ai_button = QPushButton(self._translator.t("ai_feeds_action"))
+        self._ai_button = QPushButton(self._translator.t("ai_feeds_button"))
         self._ai_button.setObjectName("settingsButton")
         self._ai_button.clicked.connect(lambda: self._on_site_action("ai_feeds", ""))
         layout.addWidget(self._ai_button)
@@ -191,7 +191,9 @@ class SiteNavigation(QFrame):
             return
         self._sites.setCurrentItem(item)
         site_name, camera_index = _reference(item)
-        menu = QMenu(self)
+        # Parented to the top-level window: libvlc makes this panel a native child, and a
+        # popup with a native child as its transient parent triggers a Qt warning.
+        menu = QMenu(self.window())
         menu.setMinimumWidth(200)
         # A click already watches a site or enlarges a camera, so the menu only edits.
         if camera_index is None:
@@ -208,6 +210,7 @@ class SiteNavigation(QFrame):
                 item.triggered.connect(lambda _checked=False, chosen=action:
                                        self._on_camera_action(chosen, site_name, camera_index))
         menu.exec(self._sites.viewport().mapToGlobal(position))
+        menu.deleteLater()
 
     def _add_action(self, menu: QMenu, label: str, action: str, site_name: str) -> None:
         item = menu.addAction(label)

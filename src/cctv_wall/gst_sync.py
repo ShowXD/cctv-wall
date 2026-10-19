@@ -104,6 +104,7 @@ class GStreamerSyncPlayer:
         self._gst_video = gst_video
         self._clock = clock
         self._pipeline: Any | None = None
+        self._sink: Any | None = None
         self._bus: Any | None = None
         self._error = ""
 
@@ -130,10 +131,15 @@ class GStreamerSyncPlayer:
         source.set_property("drop-on-latency", False)
         source.set_property("do-rtcp", True)
         source.set_property("protocols", 4)  # GstRTSPLowerTrans.TCP
+        self._sink = sink
         sink.set_property("sync", True)
         sink.set_property("ts-offset", _PRESENTATION_DELAY_NS)
         if not depay.link(parser) or not parser.link(decoder) or not convert.link(sink):
             raise PlaybackError("GStreamer could not link the strict sync pipeline")
+        # Joining mid-GOP would decode P-frames without their reference: solid green
+        # until the next keyframe. Drop them and ask the camera for a keyframe instead.
+        depay.set_property("wait-for-keyframe", True)
+        depay.set_property("request-keyframe", True)
         source.connect("pad-added", self._link_first_pad, depay.get_static_pad("sink"))
         decoder.connect("pad-added", self._link_first_pad, convert.get_static_pad("sink"))
         try:
@@ -161,6 +167,9 @@ class GStreamerSyncPlayer:
             return PlaybackState.ENDED
         _change, current, _pending = self._pipeline.get_state(0)
         if current == self._gst.State.PLAYING:
+            # A live pipeline is PLAYING long before its first frame clears the shared delay.
+            if self._sink is None or self._sink.get_property("last-sample") is None:
+                return PlaybackState.OPENING
             return PlaybackState.PLAYING
         if current in (self._gst.State.PAUSED, self._gst.State.READY):
             return PlaybackState.OPENING
@@ -170,6 +179,7 @@ class GStreamerSyncPlayer:
         if self._pipeline is not None:
             self._pipeline.set_state(self._gst.State.NULL)
         self._bus = None
+        self._sink = None
         self._pipeline = None
 
     def _element(self, name: str) -> Any:

@@ -149,6 +149,13 @@ class TestConfig:
         with pytest.raises(ValueError, match="unique"):
             Workspace.from_raw({"sites": [raw]})
 
+    def test_unnamed_cameras_are_mapped_and_told_apart_by_their_address(self):
+        feeds = [{"host": "h", "port": 1, "cameras": {"A001": "rtsp://10.0.0.1/s"}}]
+        two = [{"url": "rtsp://10.0.0.1/s"}, {"url": "rtsp://10.0.0.2/s"}]
+        Site.from_raw({"name": "Lab", "cameras": two, "ai_feeds": feeds})
+        with pytest.raises(ValueError, match="unique"):
+            Site.from_raw({"name": "Lab", "cameras": [two[0], two[0]], "ai_feeds": feeds})
+
     def test_one_camera_cannot_be_mapped_by_two_feeds(self):
         raw = {"name": "Lab", "ai_feeds": [
             {"host": "h1", "port": 1, "cameras": {"A001": "Gate"}},

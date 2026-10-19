@@ -11,7 +11,7 @@ from cctv_wall.i18n import Translator
 from cctv_wall.player import PlaybackState
 from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _Tile,
-                               _due_for_retry)
+                               _due_for_retry, _release_detached)
 
 
 def _tile() -> _Tile:
@@ -43,6 +43,18 @@ class TestBackoff:
             _due_for_retry(tile)
         tile.reset_backoff()
         assert _due_for_retry(tile) is True
+
+
+class TestReleaseDetached:
+    def test_a_surface_qt_already_destroyed_at_quit_is_not_an_error(self):
+        # 關閉程式時 Qt 可能先刪掉無 parent 的畫格，背景釋放執行緒不能因此丟例外。
+        def gone():
+            raise RuntimeError("Internal C++ object (VideoTile) already deleted.")
+        released = []
+        tile = _Tile(view=SimpleNamespace(deleteLater=gone), log_label="camera-1",
+                     player=SimpleNamespace(release=lambda: released.append(True)))
+        _release_detached([tile])
+        assert released == [True] and tile.player is None
 
 
 class TestDeadStates:
