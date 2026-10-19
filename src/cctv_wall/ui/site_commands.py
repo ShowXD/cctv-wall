@@ -15,7 +15,7 @@ from dataclasses import replace
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Site, Workspace
+from cctv_wall.models import Workspace
 
 
 def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator,
@@ -26,7 +26,7 @@ def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator
         return None
     name = _unique_name(workspace, f"{source.name} {translator.t('copy_suffix')}")
     return workspace.with_sites((*workspace.sites,
-                                 Site(name, source.cameras))).with_last_site(name)
+                                 replace(source, name=name))).with_last_site(name)
 
 
 def rename_site(parent: QWidget, workspace: Workspace, translator: Translator,

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QFr
 from cctv_wall import quality as quality_module
 from cctv_wall import vendors
 from cctv_wall.i18n import Translator
+from cctv_wall.ai_feed import AiFeedConfig
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera, Site, Workspace
 from cctv_wall.urls import display_url
 
@@ -40,6 +41,7 @@ class _SiteDraft:
 
     name: str
     cameras: list[Camera] = field(default_factory=list)
+    ai_feeds: tuple[AiFeedConfig, ...] = ()  # 只能在 workspace.json 編輯；這裡原樣帶過去
 
 
 class _CenteredTreeEditorDelegate(QStyledItemDelegate):
@@ -64,7 +66,8 @@ class WorkspaceEditor(QDialog):
         self.resize(1000, 620)
         self._workspace = workspace
         self._on_save = on_save
-        self._draft = [_SiteDraft(site.name, list(site.cameras)) for site in workspace.sites]
+        self._draft = [_SiteDraft(site.name, list(site.cameras), site.ai_feeds)
+                       for site in workspace.sites]
         self._selected_site: int | None = None
         self._selected_camera: int | None = None
         self._new_camera_dirty = False
@@ -481,7 +484,7 @@ class WorkspaceEditor(QDialog):
         if self._selected_camera is None:
             source = self._draft[self._selected_site]
             name = self._unique_site_name(f"{source.name} {self._translator.t('copy_suffix')}")
-            self._draft.append(_SiteDraft(name, list(source.cameras)))
+            self._draft.append(_SiteDraft(name, list(source.cameras), source.ai_feeds))
             self._reload_tree()
             self._select(len(self._draft) - 1)
             return
@@ -544,7 +547,8 @@ class WorkspaceEditor(QDialog):
         if self._has_camera_form() and not self._apply():
             return
         try:
-            sites = tuple(Site(name=site.name, cameras=tuple(site.cameras))
+            sites = tuple(Site(name=site.name, cameras=tuple(site.cameras),
+                               ai_feeds=site.ai_feeds)
                           for site in self._draft)
         except ValueError as error:
             QMessageBox.critical(self, self._translator.t("cannot_save"), str(error))
