@@ -564,7 +564,7 @@ class MainWindow(QMainWindow):
         return True
 
     def _change_camera_stream(self, camera: Camera, stream: int) -> None:
-        """Persist a right-click stream choice, then reconnect only the visible page."""
+        """Persist a right-click stream choice and reconnect only that camera."""
         url = direct_url_with_stream(camera.url, stream)
         if url is None:
             return  # no recognisable stream marker: guessing the URL format is unsafe
@@ -573,10 +573,16 @@ class MainWindow(QMainWindow):
         if updated is self._workspace:
             return
         self._workspace = updated
-        if self._focused_camera == camera:
-            self._focused_camera = replacement
         self._persist()
-        self._show_current_page()
+        self._show_replaced_camera(camera, replacement)
+
+    def _show_replaced_camera(self, old: Camera, new: Camera) -> None:
+        """One edited camera reconnects alone, unless strict sync forces the whole page."""
+        if self._focused_camera == old:
+            self._focused_camera = new
+        self._navigation.set_workspace(self._workspace)
+        if not self._wall.replace_camera(old, new):
+            self._show_current_page()
 
     def _open_settings(self, site_name: str | None = None) -> None:
         before = self._workspace

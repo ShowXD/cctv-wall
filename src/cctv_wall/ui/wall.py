@@ -118,6 +118,13 @@ class VideoTile(QFrame):
         self._set_tooltip()
         self._notice.hide()
 
+    def set_camera(self, camera: Camera) -> None:
+        """Show an edited camera in this card; a renamed camera's old AI result no longer applies."""
+        if camera.name != self.camera.name:
+            self._ai.hide()
+        self.camera = camera
+        self._set_tooltip()
+
     def show_ai_event(self, text: str) -> None:
         """Latest AI result for this camera; the full history lives in the side panel."""
         self._ai.setText(text)
@@ -368,6 +375,27 @@ class WallView(QWidget):
         if not _due_for_retry(tile):
             return False
         logger().info("camera=%s reconnecting", tile.log_label)
+        self._release(tile)
+        self._start(tile)
+        return True
+
+    def replace_camera(self, old: Camera, new: Camera) -> bool:
+        """Reconnect only the tile showing `old`; the rest of the page keeps playing.
+
+        False means the caller has to rebuild the page instead: the camera is not on it,
+        or the strict-sync backend runs every tile on one shared clock.
+        """
+        if getattr(self._factory, "synchronized", False):
+            return False
+        tile = next((t for t in self._tiles if t.view.camera == old), None)
+        if tile is None:
+            return False
+        tile.view.set_camera(new)
+        tile.log_label = new.name or tile.log_label
+        if tile in self._pending_starts:
+            return True   # not connected yet; it will start with the new settings
+        tile.reset_backoff()
+        logger().info("camera=%s reconnecting with new settings", tile.log_label)
         self._release(tile)
         self._start(tile)
         return True
