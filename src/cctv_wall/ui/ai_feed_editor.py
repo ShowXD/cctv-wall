@@ -5,8 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
                                QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
                                QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget)
@@ -98,7 +97,8 @@ class AiFeedsDialog(QDialog):
         self._translator = translator
         self._site_name = site_name
         self._cameras = tuple(cameras)
-        self._camera_names = [camera.name for camera in self._cameras if camera.name]
+        # Results reach a tile by the camera's label, so unnamed cameras can be mapped too.
+        self._camera_names = [camera.label for camera in self._cameras]
         self._forms = [FeedForm.from_config(feed) for feed in feeds]
         self._current: int | None = None
         self.result_feeds: tuple[AiFeedConfig, ...] | None = None
@@ -167,12 +167,20 @@ class AiFeedsDialog(QDialog):
         mapping = QGroupBox(self._translator.t("ai_camera_map"))
         mapping_box = QVBoxLayout(mapping)
         self._table = QTableWidget(0, 2)
-        self._table.setHorizontalHeaderLabels([self._translator.t("ai_camera"),
-                                               self._translator.t("ai_source_id")])
+        self._table.setHorizontalHeaderLabels([self._translator.t("ai_source_id"),
+                                               self._translator.t("ai_camera")])
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.verticalHeader().hide()
-        self._table.setMinimumHeight(190)   # header + five cameras without scrolling
+        self._table.setMinimumHeight(140)   # header + four mappings without scrolling
         mapping_box.addWidget(self._table)
+        row_buttons = QHBoxLayout()
+        for text, action in ((self._translator.t("ai_add_row"), self._add_empty_row),
+                             (self._translator.t("ai_remove_row"), self._remove_row)):
+            button = QPushButton(text)
+            button.clicked.connect(action)
+            row_buttons.addWidget(button)
+        row_buttons.addStretch(1)
+        mapping_box.addLayout(row_buttons)
         box.addWidget(mapping, 2)
 
         advanced = QGroupBox(self._translator.t("ai_advanced"))
@@ -211,10 +219,8 @@ class AiFeedsDialog(QDialog):
         self._port.setText(form.port)
         self._delay.setValue(form.delay_ms)
         self._table.setRowCount(0)
-        ids = {camera: source for source, camera in form.mapping}
-        # A mapping to a camera that was renamed or removed stays visible until cleared.
-        for camera in [*self._camera_names, *(c for c in ids if c not in self._camera_names)]:
-            self._add_row(camera, ids.get(camera, ""))
+        for source, camera in form.mapping:
+            self._add_row(source, camera)
         self._advanced.setPlainText(form.advanced)
 
     def _store_current(self) -> None:
@@ -222,9 +228,9 @@ class AiFeedsDialog(QDialog):
             return
         rows = []
         for row in range(self._table.rowCount()):
-            source = self._table.item(row, 1).text().strip()
-            if source:
-                rows.append((source, self._table.item(row, 0).text()))
+            combo = self._table.cellWidget(row, 1)
+            rows.append((self._table.item(row, 0).text(),
+                         combo.currentText() if isinstance(combo, QComboBox) else ""))
         self._forms[self._current] = FeedForm(self._host.text().strip(), self._port.text().strip(),
                                               self._delay.value(), rows,
                                               self._advanced.toPlainText())
@@ -234,13 +240,28 @@ class AiFeedsDialog(QDialog):
             self._list.item(self._current).setText(
                 self._feed_label(self._host.text().strip(), self._port.text().strip()))
 
-    def _add_row(self, camera: str, source: str) -> None:
+    def _add_row(self, source: str, camera: str) -> None:
         row = self._table.rowCount()
         self._table.insertRow(row)
-        name = QTableWidgetItem(camera)
-        name.setFlags(name.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self._table.setItem(row, 0, name)
-        self._table.setItem(row, 1, QTableWidgetItem(source))
+        self._table.setItem(row, 0, QTableWidgetItem(source))
+        combo = QComboBox()
+        names = list(self._camera_names)
+        if camera and camera not in names:
+            names.append(camera)   # keep a mapping to a renamed camera visible, not dropped
+        combo.addItems(names)
+        combo.setCurrentIndex(names.index(camera) if camera else -1)
+        self._table.setCellWidget(row, 1, combo)
+
+    def _add_empty_row(self) -> None:
+        """Preselect the first camera that no connection has claimed yet."""
+        self._store_current()
+        used = {camera for form in self._forms for _source, camera in form.mapping}
+        self._add_row("", next((name for name in self._camera_names if name not in used), ""))
+        self._table.editItem(self._table.item(self._table.rowCount() - 1, 0))
+
+    def _remove_row(self) -> None:
+        if self._table.currentRow() >= 0:
+            self._table.removeRow(self._table.currentRow())
 
     def _add_feed(self) -> None:
         self._store_current()

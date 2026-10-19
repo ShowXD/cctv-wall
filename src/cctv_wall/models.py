@@ -153,8 +153,8 @@ class Site:
         if not self.name.strip():
             raise ValueError("site needs a name")
         if self.ai_feeds:
-            # AI 結果是用攝影機名稱對應到畫格，同名就分不出是哪一台。
-            names = [c.name for c in self.cameras if c.name]
+            # AI 結果是用攝影機顯示名稱（未命名時是網址）對應到畫格，同名就分不出是哪一台。
+            names = [c.label for c in self.cameras]
             duplicate = next((n for n in names if names.count(n) > 1), None)
             if duplicate:
                 raise ValueError(f"site {self.name!r} has ai_feeds, so camera names must be "

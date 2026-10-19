@@ -120,7 +120,7 @@ class VideoTile(QFrame):
 
     def set_camera(self, camera: Camera) -> None:
         """Show an edited camera in this card; a renamed camera's old AI result no longer applies."""
-        if camera.name != self.camera.name:
+        if camera.label != self.camera.label:
             self._ai.hide()
         self.camera = camera
         self._set_tooltip()
@@ -451,7 +451,7 @@ class WallView(QWidget):
                 continue
             explanation = STATE_EXPLANATION_KEYS.get(state, "not_playing")
             if state not in DEAD_STATES:
-                tile.view.show_notice(self._translator.t(explanation), "warning")
+                self._show_opening(tile)
                 continue
             retried = self._advance_reconnect(tile)
             tile.view.show_notice(self._outage_message(tile, explanation, retried), "error")

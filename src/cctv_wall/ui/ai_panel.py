@@ -165,8 +165,7 @@ class AiEventPanel(QFrame):
         self._filter.clear()
         self._filter.addItem(self._translator.t("ai_all_cameras"), None)
         for camera in self._site.cameras if self._site is not None else ():
-            if camera.name:
-                self._filter.addItem(camera.name, camera.name)
+            self._filter.addItem(camera.label, camera.label)
         self._filter.setCurrentIndex(max(self._filter.findData(chosen), 0))
         self._filter.blockSignals(False)
         self._apply_filter()
@@ -183,6 +182,6 @@ class AiEventPanel(QFrame):
     def _choose_camera(self, item: QListWidgetItem) -> None:
         name = item.data(Qt.ItemDataRole.UserRole)
         site = self._site
-        camera = next((c for c in site.cameras if c.name == name), None) if site else None
+        camera = next((c for c in site.cameras if c.label == name), None) if site else None
         if camera is not None:
             self._on_camera_chosen(camera)
