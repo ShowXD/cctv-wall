@@ -349,9 +349,12 @@ class MainWindow(QMainWindow):
                                   total=usage.core_count, percent=usage.machine_percent)
 
     def _on_site_selected(self, site_name: str) -> None:
-        if not site_name or site_name == self._active_site_name:
+        """Choosing the site on screen again (e.g. arrowing back onto its row) restores the grid."""
+        if not site_name:
             return
         self._exit_camera_focus_if_needed()
+        if site_name == self._active_site_name:
+            return
         self._active_site_name = site_name
         self._workspace = self._workspace.with_last_site(site_name)
         self._page = 0

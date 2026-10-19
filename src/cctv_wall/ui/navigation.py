@@ -22,14 +22,33 @@ def _reference(item: QTreeWidgetItem) -> ItemReference:
 class _SiteTree(FlatTree):
     """Sites with their cameras, reorderable by drag inside one level only."""
 
-    def __init__(self, on_reorder: Callable[[], None]) -> None:
+    def __init__(self, on_reorder: Callable[[], None],
+                 on_reselect: Callable[[QTreeWidgetItem], None]) -> None:
         super().__init__()
         self._on_reorder = on_reorder
+        self._on_reselect = on_reselect
+        self._pressed_current: QTreeWidgetItem | None = None
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDragDropOverwriteMode(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+
+    def mousePressEvent(self, event) -> None:
+        item = self.itemAt(event.position().toPoint())
+        self._pressed_current = item if item is not None and item is self.currentItem() else None
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        # currentItemChanged stays silent when the selected row is clicked again, so that
+        # click — "put the enlarged camera back" — is reported here. Acting on release, and
+        # only on the same row, keeps a drag that starts on the selected row from firing it.
+        super().mouseReleaseEvent(event)
+        item = self.itemAt(event.position().toPoint())
+        if (item is not None and item is self._pressed_current
+                and event.button() == Qt.MouseButton.LeftButton):
+            self._on_reselect(item)
+        self._pressed_current = None
 
     def dropEvent(self, event) -> None:
         # A camera dropped onto another site would silently move it between locations;
@@ -89,7 +108,7 @@ class SiteNavigation(QFrame):
         self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section.addWidget(self._count)
         layout.addLayout(section)
-        self._sites = _SiteTree(self._apply_reorder)
+        self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item))
         self._sites.setObjectName("siteList")
         self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
