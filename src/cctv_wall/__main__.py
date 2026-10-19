@@ -84,20 +84,33 @@ def _check(bundled: Path | None) -> int:
     message = "\n".join(lines)
     if sys.stdout is None:
         # Double-clicked windowed exe: no console exists, so show the report in a dialog.
-        _show_report(message, failed=status != 0)
+        _show_report(message, failed=status != 0, title="CCTV Wall — environment check")
     else:
         print(message)
     return status
 
 
-def _show_report(message: str, failed: bool) -> None:
+def _show_report(message: str, failed: bool, title: str) -> None:
     """Only shut down the QApplication when this report is the one that created it."""
     existing = QApplication.instance()
     application = existing or QApplication([])
     show = QMessageBox.critical if failed else QMessageBox.information
-    show(None, "CCTV Wall — environment check", message)
+    show(None, title, message)
     if existing is None:
         application.quit()
+
+
+def _fail(message: str, status: int) -> int:
+    """Report a startup failure where the operator can see it, and keep it in the log.
+
+    The released exe has no console, so stderr alone would make it vanish silently.
+    """
+    logger().error("startup failed: %s", message)
+    if sys.stderr is None:
+        _show_report(message, failed=True, title="CCTV Wall")
+    else:
+        print(message, file=sys.stderr)
+    return status
 
 
 def _apply_system_theme(application: QApplication, scheme: Qt.ColorScheme | None = None) -> None:
@@ -120,8 +133,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             import vlc  # noqa: F401  — checked here so the failure message stays friendly
         except (ImportError, OSError) as e:
-            print(f"libvlc is unavailable: {e}\n{VLC_HINT}", file=sys.stderr)
-            return 2
+            return _fail(f"libvlc is unavailable: {e}\n{VLC_HINT}", 2)
 
     application = QApplication(sys.argv)
     # Point sizes respect Windows display scaling; the platform default is too small for a
@@ -142,8 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         workspace = load_workspace()
     except WorkspaceError as e:
         startup.dismiss()
-        print(f"{e}\n\nFix or delete {default_config_path()} and try again.", file=sys.stderr)
-        return 1
+        return _fail(f"{e}\n\nFix or delete {default_config_path()} and try again.", 1)
 
     startup.set_progress(45, "正在準備播放環境…")
     startup.set_progress(65, "正在載入監看介面…")
@@ -157,9 +168,9 @@ def main(argv: list[str] | None = None) -> int:
         window = MainWindow(workspace, _factory_builder(dry_run), save_workspace)
     except Exception as e:  # a failure here would leave a dead window: say why, then stop
         startup.dismiss()
+        result = _fail(f"could not start: {e}", 1)
         application.quit()
-        print(f"could not start: {e}", file=sys.stderr)
-        return 1
+        return result
 
     startup.set_progress(100, "準備完成")
     if dry_run:
