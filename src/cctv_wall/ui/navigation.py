@@ -114,7 +114,6 @@ class SiteNavigation(QFrame):
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self._sites, 1)
-        layout.addStretch(1)
         settings = QPushButton(self._translator.t("manage"))
         settings.setObjectName("settingsButton")
         settings.clicked.connect(on_settings_requested)
