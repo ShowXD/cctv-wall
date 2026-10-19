@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-08-06 17:30
+> 最後更新：2026-10-19（AI 結果 TCP 對照）
 
 ---
 
@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 154 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 238 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **154 passed** |
+| 測試 | **238 passed**（2026-10-19，`uv run --frozen --group dev python -m pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -38,6 +38,52 @@ uv run build cctv-wall         # 打包（一律 onefile）
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
 
 ---
+
+## 2026-10-19：AI 結果 TCP 對照（分支 `feature/ai-feed`）
+
+**狀態：已實作、已驗證，已在 `feature/ai-feed` 分 3 個 commit（領域層／介面／文件），尚未 push 或合併。**
+下一步：以實際 AI 端連線現場校準各連線的 `delay_ms`，並確認第二條連線的攝影機識別值。
+
+- 需求：部分專案的 AI 端以 TCP 回傳辨識結果（文字事件/數值），要和影像對照，且時間要對上。
+- 實際專案：**2 條 TCP 連線，每條帶 2 台攝影機**，訊息如
+  `{"eventType":4,"cameraName":"A001","created":"2026-10-19 12:10:49.750","payload":[...]}`；
+  使用者確認 4 台在**同一個地點**（A 方案），該地點設 2 條連線。第二條連線的識別值未確認，
+  可能也是 A001/A002，所以每條連線有自己的 `cameras` 對照表。
+  `eventType`（0 未知／1 距離偵測／2 淨空區狀態／3 車流統計／4 路口停等偵測）與
+  `vdType`（1 公車／2 汽車／3 機車／4 行人／5 卡車／6 大卡車／7 腳踏車）由使用者提供，以 `labels` 設定。
+  `payload` 為空的狀態回報每台約每秒一筆，用 `skip_empty: ["payload"]` 略過（**不是**心跳，
+  所以不按 eventType 整類濾掉）。
+- 格式彈性：「每行一筆 JSON」的差異全部走設定（`camera_key`/`time_key`/`cameras`/`skip`/`skip_empty`/`labels`）；
+  非 JSON 格式才需要換 `ai_feed.parse_line`，刻意等真的遇到再做。
+- 設計：`Site.ai_feeds`（清單，選填）→ 每條各一個 `ai_feed.AiFeedClient` 背景執行緒讀 NDJSON →
+  `ui/ai_panel.AiEventPanel` 以 Signal 轉回 GUI，事件在**每條連線各自的**佇列等滿該連線的 `delay_ms`
+  （對齊 VLC 緩衝延遲）才同時顯示到側欄與畫格下方 `tileAi` 條。說明見 [USAGE](USAGE.md)〈AI 辨識結果對照〉。
+- 決策：
+  - 本程式是 client（使用者確認）；只支援每行一筆 JSON。
+  - 用攝影機**名稱**對應（Camera 沒有 id），所以有 `ai_feeds` 的地點在 `Site.__post_init__` 強制名稱不重複，
+    且同一台攝影機不可被兩條連線對到。對照表指到不存在的名稱**不**報錯，以免在設定視窗改名後無法存檔。
+  - 同一種解析問題每條連線只記一次 log（`parse_line(..., warned)`），否則每秒的狀態回報會洗掉輪替日誌。
+  - 文字放在影像外的條狀區，原因同 `tileAudio`：原生 VLC surface 會蓋住疊在上面的 Qt widget。
+  - 聚焦單台攝影機時側欄**不隱藏**（`app._refresh_ai_panel`），全螢幕／填滿視窗才隱藏。
+  - `ai_feed.py` 用 `logging.getLogger("cctv_wall.ai_feed")` 而非 `event_log.logger()`，避免領域層匯入 Qt。
+  - 設定視窗與「複製地點」都會原樣保留 `ai_feeds`（`editor._SiteDraft.ai_feeds`、`site_commands.duplicate_site`）。
+- 驗證：解析部分 229 passed（`tests/test_ai_feed.py` 含使用者提供的實際訊息、`labels` 巢狀替換、`skip_empty`、
+  本機 loopback 收行、重連、`stop()` 中斷阻塞讀取）；使用者第二批 7 行訊息以完整 `labels` 設定解析，
+  2 筆偵測顯示為「路口停等偵測／腳踏車」「距離偵測／機車」，5 筆空 `payload` 略過。
+  另以兩個假 AI server（實際格式，皆送 A001/A002）＋`NullPlayerFactory` 實際開主視窗確認：
+  兩條皆連線、空 `payload` 全數略過、8 筆偵測正確分到 4 台且代碼顯示為文字、各格下方顯示各自最新結果；
+  更早一版也確認過壞行略過、時鐘偏差標 ⚠、點選後聚焦且側欄仍在。
+  介面設定（238 passed，新增表單轉換測試）：實際操作對話框新增第二條連線，格式正確沿用、切換連線不遺失輸入、
+  確定後產出兩條正確設定；左側欄右鍵路徑會存檔並讓側欄連線，設定視窗路徑在儲存後寫入。
+- 介面設定：`ui/ai_feed_editor.AiFeedsDialog`，從左側欄地點右鍵（`site_commands.edit_site_ai_feeds`，
+  立即存檔）或設定視窗地點右鍵（寫入草稿，按儲存才生效）開啟。IP／port／延遲／攝影機對照用表單；
+  `camera_key`/`time_key`/`skip`/`skip_empty`/`labels` 屬於「換專案才改」的訊息格式，刻意用 JSON 文字框，
+  新增連線時沿用所選連線的格式。表單→設定的驗證在 `config_from_form`／`feeds_from_forms`（有測試）。
+- 刻意沒做：bbox 疊框（需透明頂層視窗）、本程式當 TCP server、非 JSON 格式、事件匯出。
+- 注意：本分支的 `uv.lock` 仍是舊版（版本寫 0.2.0），`uv run` 會自動改寫它一次。已在 `main` 以
+  `01d2cc3 chore: 更新 uv.lock 至 0.4.0` 修正（實測更新後的 lock 再跑 `uv run`／`uv lock --check` 都不再變動）；
+  本分支合併或 rebase 到 `main` 後即消失，在那之前改寫出來的 `uv.lock` 不要 commit 進本分支。
+  之後升版號要同時跑 `uv lock` 並一起 commit。
 
 ## 這一輪（2026-08-06 下午）改了什麼
 

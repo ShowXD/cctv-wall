@@ -15,7 +15,8 @@ from dataclasses import replace
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Site, Workspace
+from cctv_wall.models import Workspace
+from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
 
 
 def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator,
@@ -26,7 +27,7 @@ def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator
         return None
     name = _unique_name(workspace, f"{source.name} {translator.t('copy_suffix')}")
     return workspace.with_sites((*workspace.sites,
-                                 Site(name, source.cameras))).with_last_site(name)
+                                 replace(source, name=name))).with_last_site(name)
 
 
 def rename_site(parent: QWidget, workspace: Workspace, translator: Translator,
@@ -63,6 +64,19 @@ def delete_site(parent: QWidget, workspace: Workspace, translator: Translator,
                                      if site.name != source.name)
     active = remaining.active_site
     return remaining.with_last_site(active.name if active else "")
+
+
+def edit_site_ai_feeds(parent: QWidget, workspace: Workspace, translator: Translator,
+                       site_name: str) -> Workspace | None:
+    """Edit the AI result connections of one site straight from the navigation."""
+    source = workspace.site(site_name)
+    if source is None:
+        return None
+    feeds = edit_ai_feeds(parent, translator, source.name, source.cameras, source.ai_feeds)
+    if feeds is None or feeds == source.ai_feeds:
+        return None
+    return workspace.with_sites(replace(site, ai_feeds=feeds) if site.name == source.name else site
+                                for site in workspace.sites)
 
 
 def _unique_name(workspace: Workspace, base: str) -> str:

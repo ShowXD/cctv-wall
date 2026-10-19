@@ -48,6 +48,21 @@
     },
     {
       "name": "Warehouse",
+      "ai_feeds": [
+        {
+          "host": "10.1.0.50",
+          "port": 9000,
+          "camera_key": "cameraName",
+          "time_key": "created",
+          "delay_ms": 1500,
+          "cameras": { "A001": "Dock" },
+          "skip_empty": ["payload"],
+          "labels": {
+            "eventType": { "1": "距離偵測", "2": "淨空區狀態", "3": "車流統計", "4": "路口停等偵測" },
+            "vdType": { "1": "公車", "2": "汽車", "3": "機車", "4": "行人" }
+          }
+        }
+      ],
       "cameras": [
         {
           "name": "Dock",

@@ -16,7 +16,9 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout, QFr
 from cctv_wall import quality as quality_module
 from cctv_wall import vendors
 from cctv_wall.i18n import Translator
+from cctv_wall.ai_feed import AiFeedConfig
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera, Site, Workspace
+from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
 from cctv_wall.urls import display_url
 
 PRIMARY_TEXT_FIELDS = ("name", "url")
@@ -40,6 +42,7 @@ class _SiteDraft:
 
     name: str
     cameras: list[Camera] = field(default_factory=list)
+    ai_feeds: tuple[AiFeedConfig, ...] = ()  # 由「AI 辨識連線…」對話框編輯
 
 
 class _CenteredTreeEditorDelegate(QStyledItemDelegate):
@@ -64,7 +67,8 @@ class WorkspaceEditor(QDialog):
         self.resize(1000, 620)
         self._workspace = workspace
         self._on_save = on_save
-        self._draft = [_SiteDraft(site.name, list(site.cameras)) for site in workspace.sites]
+        self._draft = [_SiteDraft(site.name, list(site.cameras), site.ai_feeds)
+                       for site in workspace.sites]
         self._selected_site: int | None = None
         self._selected_camera: int | None = None
         self._new_camera_dirty = False
@@ -296,6 +300,7 @@ class WorkspaceEditor(QDialog):
             menu.addAction(self._translator.t("add_camera"), self._add_camera)
             menu.addAction(self._translator.t("duplicate_selected"), self._duplicate_selected)
             menu.addAction(self._translator.t("rename_site"), self._rename_selected_site)
+            menu.addAction(self._translator.t("ai_feeds_action"), self._edit_ai_feeds)
             self._add_move_actions(menu)
             menu.addSeparator()
             menu.addAction(self._translator.t("delete"), self._delete_selected)
@@ -481,7 +486,7 @@ class WorkspaceEditor(QDialog):
         if self._selected_camera is None:
             source = self._draft[self._selected_site]
             name = self._unique_site_name(f"{source.name} {self._translator.t('copy_suffix')}")
-            self._draft.append(_SiteDraft(name, list(source.cameras)))
+            self._draft.append(_SiteDraft(name, list(source.cameras), source.ai_feeds))
             self._reload_tree()
             self._select(len(self._draft) - 1)
             return
@@ -492,6 +497,15 @@ class WorkspaceEditor(QDialog):
         self._selected_camera = len(cameras) - 1
         self._reload_tree()
         self._select(self._selected_site, self._selected_camera)
+
+    def _edit_ai_feeds(self) -> None:
+        """Takes effect with the rest of the draft when Save is pressed."""
+        if self._selected_site is None:
+            return
+        site = self._draft[self._selected_site]
+        feeds = edit_ai_feeds(self, self._translator, site.name, site.cameras, site.ai_feeds)
+        if feeds is not None:
+            site.ai_feeds = feeds
 
     def _increment_ip(self) -> None:
         """Advance an IPv4/IPv6 address in the form without touching its other fields."""
@@ -544,7 +558,8 @@ class WorkspaceEditor(QDialog):
         if self._has_camera_form() and not self._apply():
             return
         try:
-            sites = tuple(Site(name=site.name, cameras=tuple(site.cameras))
+            sites = tuple(Site(name=site.name, cameras=tuple(site.cameras),
+                               ai_feeds=site.ai_feeds)
                           for site in self._draft)
         except ValueError as error:
             QMessageBox.critical(self, self._translator.t("cannot_save"), str(error))

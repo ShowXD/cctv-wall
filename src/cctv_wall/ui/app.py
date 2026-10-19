@@ -16,12 +16,13 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QMainWind
 from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import LANGUAGE_LABELS, Translator
-from cctv_wall.models import Camera, Workspace
+from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.performance import PROFILES, PerformanceProfile, profile_for
 from cctv_wall.player import PlaybackError, PlayerFactory
 from cctv_wall.resolvers import StreamResolver
 from cctv_wall.resources import ProcessUsage, ResourceMonitor
 from cctv_wall.ui import site_commands
+from cctv_wall.ui.ai_panel import AiEventPanel
 from cctv_wall.ui.editor import open_editor
 from cctv_wall.ui.frameless import FramelessGrips
 from cctv_wall.ui.logs import show_log_dialog
@@ -38,6 +39,7 @@ SITE_COMMANDS = {
     "duplicate": site_commands.duplicate_site,
     "rename": site_commands.rename_site,
     "delete": site_commands.delete_site,
+    "ai_feeds": site_commands.edit_site_ai_feeds,
 }
 
 
@@ -75,8 +77,12 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Escape"), self, activated=self._exit_immersive_mode)
 
     @property
+    def _site(self) -> Site | None:
+        return self._workspace.site(self._active_site_name) or self._workspace.active_site
+
+    @property
     def _cameras(self) -> tuple[Camera, ...]:
-        site = self._workspace.site(self._active_site_name) or self._workspace.active_site
+        site = self._site
         return site.cameras if site else ()
 
     def _create_factory(self, strict_sync: bool) -> PlayerFactory:
@@ -102,8 +108,13 @@ class MainWindow(QMainWindow):
                                           self._on_site_action, self._translator,
                                           self._on_camera_selected, self._on_sites_reordered)
         splitter.addWidget(self._navigation)
+        self._ai_panel = AiEventPanel(
+            self._translator,
+            on_event_shown=lambda camera_name, text: self._wall.show_ai_event(camera_name, text),
+            on_camera_chosen=lambda camera: self._on_camera_selected(self._active_site_name, camera))
         splitter.addWidget(self._monitor_panel())
-        splitter.setSizes([260, 1180])
+        splitter.addWidget(self._ai_panel)
+        splitter.setSizes([260, 1180, 300])
         self.setCentralWidget(splitter)
         self._status = QStatusBar()
         self._status.setSizeGripEnabled(False)
@@ -197,6 +208,7 @@ class MainWindow(QMainWindow):
         self._monitor_header_widget.setVisible(visible)
         self._control_bar_widget.setVisible(visible)
         self.statusBar().setVisible(visible)
+        self._refresh_ai_panel()
         self._wall.set_immersive(not visible)
         if not visible and not self._view.fullscreen:
             self._set_wall_frameless(self._view.filled)
@@ -258,6 +270,12 @@ class MainWindow(QMainWindow):
         self._sync_button.setChecked(self._workspace.strict_sync)
         self._refresh_sync_button()
         layout_box.addWidget(self._sync_button)
+        self._ai_button = self._button(self._translator.t("ai_short"), self._translator.t("ai_events"),
+                                       self._refresh_ai_panel)
+        self._ai_button.setCheckable(True)
+        self._ai_button.setChecked(True)
+        self._ai_button.hide()
+        layout_box.addWidget(self._ai_button)
         layout_box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_BrowserReload,
                                                self._translator.t("reload_tip"),
                                                self._show_current_page))
@@ -299,7 +317,21 @@ class MainWindow(QMainWindow):
         cameras = self._displayed_cameras
         self._page = layout.clamp_page(self._page, len(cameras), self._wall.tiles_per_page)
         self._wall.show_page(cameras, self._page)
+        self._ai_panel.watch(self._site)
+        self._refresh_ai_panel()
         self._refresh_status()
+
+    def _refresh_ai_panel(self) -> None:
+        """The panel and its toggle exist only for a site with an AI feed configured.
+
+        Focusing a camera hides the other chrome, but the panel stays: an enlarged
+        camera beside its result list is exactly the comparison view.
+        """
+        has_feed = self._ai_panel.has_feed
+        self._ai_button.setVisible(has_feed)
+        roomy = self._view.chrome_visible or (self._focused_camera is not None
+                                              and not self._view.fullscreen)
+        self._ai_panel.setVisible(has_feed and roomy and self._ai_button.isChecked())
 
     def _refresh_status(self) -> None:
         total = len(self._displayed_cameras)
@@ -422,6 +454,7 @@ class MainWindow(QMainWindow):
         self._translator = Translator(self._workspace.language)
         self._persist()
         self._wall.stop()
+        self._ai_panel.stop()
         previous = self.takeCentralWidget()
         if previous is not None:
             previous.deleteLater()
@@ -561,6 +594,7 @@ class MainWindow(QMainWindow):
             self._workspace = self._workspace.with_geometry(
                 f"{self.width()}x{self.height()}+{self.x()}+{self.y()}")
             self._persist()
+        self._ai_panel.stop()
         self._wall.stop()
         self._factory.shutdown()
 

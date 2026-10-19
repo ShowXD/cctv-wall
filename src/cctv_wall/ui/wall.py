@@ -90,6 +90,11 @@ class VideoTile(QFrame):
         card = QVBoxLayout(self)
         card.setContentsMargins(1, 1, 1, 1)
         card.addWidget(self.surface, 1)
+        # Same reason as the audio strip below: text on the image itself would be hidden.
+        self._ai = QLabel()
+        self._ai.setObjectName("tileAi")
+        self._ai.hide()
+        card.addWidget(self._ai)
         self._notice = QLabel()
         self._notice.setObjectName("tileNotice")
         self._notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -130,6 +135,12 @@ class VideoTile(QFrame):
         self._audio.setVisible(listening)
         self.setProperty("listening", listening)
         self._refresh_style(self)
+
+    def show_ai_event(self, text: str) -> None:
+        """Latest AI result for this camera; the full history lives in the side panel."""
+        self._ai.setText(text)
+        self._ai.setToolTip(text)
+        self._ai.show()
 
     def _set_tooltip(self) -> None:
         # The image itself is the primary UI. Hover should identify the source only;
@@ -349,6 +360,12 @@ class WallView(QWidget):
             self._apply_audio(tile)
         if self._on_health_change is not None:
             self._on_health_change()
+
+    def show_ai_event(self, camera_name: str, text: str) -> None:
+        """Route an AI result to the visible tile of that camera; other pages ignore it."""
+        for tile in self._tiles:
+            if tile.view.camera.name == camera_name:
+                tile.view.show_ai_event(text)
 
     def stop(self) -> None:
         """Cancel queued starts before releasing visible players during page/site changes."""

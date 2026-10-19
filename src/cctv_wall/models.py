@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
 from cctv_wall import quality as quality_module
+from cctv_wall.ai_feed import AiFeedConfig
 from cctv_wall import vendors
 
 MIN_STREAM = 1
@@ -115,10 +116,25 @@ class Site:
 
     name: str
     cameras: tuple[Camera, ...] = ()
+    ai_feeds: tuple[AiFeedConfig, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.name.strip():
             raise ValueError("site needs a name")
+        if self.ai_feeds:
+            # AI 結果是用攝影機名稱對應到畫格，同名就分不出是哪一台。
+            names = [c.name for c in self.cameras if c.name]
+            duplicate = next((n for n in names if names.count(n) > 1), None)
+            if duplicate:
+                raise ValueError(f"site {self.name!r} has ai_feeds, so camera names must be "
+                                 f"unique; {duplicate!r} is used twice")
+            # 不檢查對照表裡的名稱是否存在：在設定視窗改名或刪掉攝影機後仍要能存檔，
+            # 對不到的結果照樣列在側欄，看得出來。
+            mapped = [name for feed in self.ai_feeds for name in feed.camera_names]
+            duplicate = next((n for n in mapped if mapped.count(n) > 1), None)
+            if duplicate:
+                raise ValueError(f"site {self.name!r}: camera {duplicate!r} is mapped more than "
+                                 f"once in ai_feeds")
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> "Site":
@@ -133,10 +149,25 @@ class Site:
                 built.append(Camera.from_raw(camera))
             except ValueError as e:
                 raise ValueError(f"camera[{index}]: {e}") from e
-        return cls(name=_text(raw.get("name"))[:NAME_LIMIT], cameras=tuple(built))
+        feeds = raw.get("ai_feeds") or ()
+        if not isinstance(feeds, (list, tuple)):
+            raise ValueError("'ai_feeds' must be a list")
+        built_feeds = []
+        for index, feed in enumerate(feeds):
+            if not isinstance(feed, Mapping):
+                raise ValueError(f"ai_feeds[{index}]: must be an object")
+            try:
+                built_feeds.append(AiFeedConfig.from_raw(feed))
+            except ValueError as e:
+                raise ValueError(f"ai_feeds[{index}]: {e}") from e
+        return cls(name=_text(raw.get("name"))[:NAME_LIMIT], cameras=tuple(built),
+                   ai_feeds=tuple(built_feeds))
 
     def as_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "cameras": [c.as_dict() for c in self.cameras]}
+        raw: dict[str, Any] = {"name": self.name, "cameras": [c.as_dict() for c in self.cameras]}
+        if self.ai_feeds:
+            raw["ai_feeds"] = [feed.as_dict() for feed in self.ai_feeds]
+        return raw
 
     def with_cameras(self, cameras: Iterable[Camera]) -> "Site":
         return replace(self, cameras=tuple(cameras))
