@@ -10,12 +10,10 @@ LANGUAGE_LABELS = {"zh_TW": "繁體中文", "en": "English"}
 _MESSAGES: dict[str, dict[str, str]] = {
     "en": {
         "app_title": "CCTV Wall", "toggle_sidebar": "Show or hide the site list (Ctrl+B)", "sites": "SITES",
-        "manage": "Manage setup", "monitoring": "MONITORING / ACTIVE SITE",
-        "no_site": "No site selected", "cameras": "{count} cameras configured", "camera": "{count} camera configured",
+        "manage": "Manage setup",         "no_site": "No site selected", "cameras": "{count} cameras configured", "camera": "{count} camera configured",
         "live": "●  {live}/{total} LIVE", "page": "Page {current} of {total}",
         "previous": "Previous page", "next": "Next page", "view_profile": "VIEW PROFILE", "mute_all": "Mute every camera", "listening": "Listening to {camera}", "listen_camera": "Listen to this camera", "mute_camera": "Mute this camera",
-        "reload_tip": "Reconnect visible cameras", "focus_hint": "Double-click a camera to focus it; double-click again to return",
-        "no_cameras": "No cameras here yet", "add_camera_hint": "Open Settings to add a camera to this site.",
+        "reload_tip": "Reconnect visible cameras",         "no_cameras": "No cameras here yet", "add_camera_hint": "Open Settings to add a camera to this site.",
         "settings_title": "Settings — sites, cameras and quality", "settings_heading": "Site & camera settings",
         "settings_help": "Select a site or camera, make changes, then save them to the monitoring wall.",
         "add_site": "Add site", "add_camera": "Add camera", "delete": "Delete selected", "connection": "Connection",
@@ -68,11 +66,10 @@ _MESSAGES: dict[str, dict[str, str]] = {
     },
     "zh_TW": {
         "app_title": "CCTV 影像牆", "toggle_sidebar": "顯示或隱藏地點清單（Ctrl+B）", "sites": "監看地點", "manage": "管理設定",
-        "monitoring": "即時監看／目前地點", "no_site": "尚未選擇地點", "cameras": "已設定 {count} 支攝影機", "camera": "已設定 {count} 支攝影機",
+        "no_site": "尚未選擇地點", "cameras": "已設定 {count} 支攝影機", "camera": "已設定 {count} 支攝影機",
         "live": "●  {live}/{total} 路播放中", "page": "第 {current} / {total} 頁", "previous": "上一頁", "next": "下一頁",
         "view_profile": "效能模式", "mute_all": "全部靜音", "listening": "正在聆聽 {camera}", "listen_camera": "聆聽這台攝影機", "mute_camera": "靜音這台攝影機", "reload_tip": "重新連線目前可見的攝影機",
-        "focus_hint": "雙擊影像可專注觀看；再次雙擊即可回到原本畫面",
-        "no_cameras": "這個地點尚未設定攝影機", "add_camera_hint": "請開啟設定，新增一支攝影機。",
+                "no_cameras": "這個地點尚未設定攝影機", "add_camera_hint": "請開啟設定，新增一支攝影機。",
         "settings_title": "設定 — 地點、攝影機與畫質", "settings_heading": "地點與攝影機設定",
         "settings_help": "選擇地點或攝影機後修改欄位，儲存後會立即重新載入影像牆。",
         "add_site": "新增地點", "add_camera": "新增攝影機", "delete": "刪除所選項目", "connection": "連線資訊",

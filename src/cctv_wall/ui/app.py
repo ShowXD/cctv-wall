@@ -10,7 +10,7 @@ from typing import Callable
 from PySide6.QtCore import QSize, QTimer, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
-                               QMessageBox, QSplitter, QStatusBar, QToolButton, QVBoxLayout,
+                               QMessageBox, QSplitter, QToolButton, QVBoxLayout,
                                QStyle, QWidget)
 
 from cctv_wall import layout
@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self._profile = profile_for(workspace.performance)
         self._translator = Translator(workspace.language)
         self._resource_monitor = ResourceMonitor()
+        self._usage: ProcessUsage | None = None
         self._factory_builder = build_factory
         self._factory = self._create_factory(workspace.strict_sync)
         self._focused_camera: Camera | None = None
@@ -72,8 +73,9 @@ class MainWindow(QMainWindow):
         self._apply_view_mode()
         self._reload_sites()
         self._resource_timer = QTimer(self)
-        self._resource_timer.timeout.connect(self._refresh_resources)
+        self._resource_timer.timeout.connect(self._sample_resources)
         self._resource_timer.start(2000)
+        self._sample_resources()
         QShortcut(QKeySequence("F11"), self, activated=self._toggle_wall_fullscreen)
         QShortcut(QKeySequence("Escape"), self, activated=self._exit_immersive_mode)
         QShortcut(QKeySequence("Ctrl+B"), self, activated=self._toggle_sidebar)
@@ -124,12 +126,6 @@ class MainWindow(QMainWindow):
         splitter.setSizes([self._workspace.sidebar_width, 1180, 300])
         self._splitter = splitter
         self.setCentralWidget(splitter)
-        self._status = QStatusBar()
-        self._status.setSizeGripEnabled(False)
-        self._resource_status = QLabel()
-        self._resource_status.setObjectName("resourceStatus")
-        self._status.addPermanentWidget(self._resource_status)
-        self.setStatusBar(self._status)
 
     def _monitor_panel(self) -> QWidget:
         panel = QWidget()
@@ -137,9 +133,7 @@ class MainWindow(QMainWindow):
         layout_box = QVBoxLayout(panel)
         layout_box.setContentsMargins(0, 0, 0, 0)
         layout_box.setSpacing(0)
-        self._monitor_header_widget = self._monitor_header()
         self._control_bar_widget = self._control_bar()
-        layout_box.addWidget(self._monitor_header_widget)
         layout_box.addWidget(self._control_bar_widget)
         self._wall = WallView(self._factory, self._resolver, self._profile,
                               on_solo=self._toggle_camera_focus,
@@ -148,29 +142,6 @@ class MainWindow(QMainWindow):
                               on_stream_change=self._change_camera_stream)
         layout_box.addWidget(self._wall, 1)
         return panel
-
-    def _monitor_header(self) -> QWidget:
-        header = QFrame()
-        header.setObjectName("monitorHeader")
-        layout_box = QHBoxLayout(header)
-        layout_box.setContentsMargins(20, 18, 20, 16)
-        context = QVBoxLayout()
-        eyebrow = QLabel(self._translator.t("monitoring"))
-        eyebrow.setObjectName("eyebrow")
-        context.addWidget(eyebrow)
-        self._site_title = QLabel()
-        self._site_title.setObjectName("siteTitle")
-        context.addWidget(self._site_title)
-        self._site_meta = QLabel()
-        self._site_meta.setObjectName("siteMeta")
-        context.addWidget(self._site_meta)
-        layout_box.addLayout(context)
-        layout_box.addStretch(1)
-        self._live_badge = QLabel()
-        self._live_badge.setObjectName("liveBadge")
-        self._live_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout_box.addWidget(self._live_badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        return header
 
     def _toggle_wall_fullscreen(self) -> None:
         """Fullscreen the Qt shell, never the embedded VLC surface itself."""
@@ -213,9 +184,7 @@ class MainWindow(QMainWindow):
         if visible and not self._view.fullscreen:
             self._set_wall_frameless(False)
         self._navigation.setVisible(visible and self._workspace.sidebar_visible)
-        self._monitor_header_widget.setVisible(visible)
         self._control_bar_widget.setVisible(visible)
-        self.statusBar().setVisible(visible)
         self._refresh_ai_panel()
         self._wall.set_immersive(not visible)
         if not visible and not self._view.fullscreen:
@@ -241,13 +210,24 @@ class MainWindow(QMainWindow):
         layout_box.setSpacing(8)
         layout_box.addWidget(self._button("☰", self._translator.t("toggle_sidebar"),
                                           self._toggle_sidebar, "compactAction"))
+        # Everything the operator reads lives in this one bar: where, how many are live,
+        # and what it costs the PC. A separate header and status bar only took video space.
+        self._site_title = QLabel()
+        self._site_title.setObjectName("siteTitle")
+        layout_box.addWidget(self._site_title)
+        self._live_badge = QLabel()
+        self._live_badge.setObjectName("liveBadge")
+        layout_box.addWidget(self._live_badge)
+        self._resource_status = QLabel()
+        self._resource_status.setObjectName("resourceStatus")
+        layout_box.addWidget(self._resource_status)
+        layout_box.addStretch(1)
         layout_box.addWidget(self._button("‹", self._translator.t("previous"), self._previous_page, "pageControl"))
         self._page_label = QLabel()
         self._page_label.setObjectName("pageLabel")
         self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout_box.addWidget(self._page_label)
         layout_box.addWidget(self._button("›", self._translator.t("next"), self._next_page, "pageControl"))
-        layout_box.addStretch(1)
         self._profile_box = QComboBox()
         self._profile_box.setObjectName("profileBox")
         self._profile_box.setToolTip(self._translator.t("view_profile"))
@@ -343,22 +323,26 @@ class MainWindow(QMainWindow):
         pages = self._wall.page_count(total)
         visible = min(self._wall.tiles_per_page,
                       max(total - self._page * self._wall.tiles_per_page, 0))
-        site_name = self._active_site_name or self._translator.t("no_site")
-        self._site_title.setText(site_name)
-        camera_key = "camera" if total == 1 else "cameras"
-        self._site_meta.setText(self._translator.t(camera_key, count=total))
+        self._site_title.setText(self._active_site_name or self._translator.t("no_site"))
         self._live_badge.setText(self._translator.t("live", live=self._wall.playing_count, total=visible))
         self._page_label.setText(self._translator.t("page", current=self._page + 1, total=pages))
-        self._status.showMessage(self._translator.t("focus_hint"))
-        self._refresh_resources()
+        self._show_resources()
         self._refresh_audio_button()
 
-    def _refresh_resources(self) -> None:
-        usage = self._resource_monitor.sample()
+    def _sample_resources(self) -> None:
+        """Only the 2 s timer samples, so CPU is always averaged over the same interval.
+
+        Sampling on every status refresh as well made the window — and the number — jump.
+        """
+        self._usage = self._resource_monitor.sample()
+        self._show_resources()
+
+    def _show_resources(self) -> None:
+        usage = self._usage
         unknown = self._translator.t("usage_unknown")
-        cpu = self._cpu_text(usage, unknown)
+        cpu = self._cpu_text(usage, unknown) if usage is not None else unknown
         memory = (f"{usage.memory_mebibytes:.0f} MB"
-                  if usage.memory_mebibytes is not None else unknown)
+                  if usage is not None and usage.memory_mebibytes is not None else unknown)
         self._resource_status.setText(self._translator.t(
             "usage", players=self._wall.allocated_player_count, cpu=cpu, memory=memory))
 

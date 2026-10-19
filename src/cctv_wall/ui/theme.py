@@ -19,9 +19,8 @@ QPushButton#settingsButton { text-align: left; background: #202c3d; color: #e9f1
 QPushButton#settingsButton:hover { background: #2b3c53; }
 
 QWidget#monitorPanel { background: #10151f; }
-QFrame#monitorHeader { background: #10151f; border-bottom: 1px solid #202a38; }
-QLabel#siteTitle { color: #f7f9fc; font-size: 20pt; font-weight: 700; }
-QLabel#siteMeta { color: #8fa0b7; font-size: 11pt; }
+QLabel#siteTitle { color: #f7f9fc; font-size: 13pt; font-weight: 700; padding: 0 4px; }
+QLabel#resourceStatus { color: #8fa0b7; font-size: 9pt; }
 QLabel#liveBadge { color: #78dfad; background: #173a32; border: 1px solid #256047; border-radius: 10px; padding: 4px 9px; font-size: 9pt; font-weight: 700; }
 QFrame#controlBar { background: #151c28; border-bottom: 1px solid #202a38; }
 QLabel#pageLabel { color: #d7e0eb; min-width: 80px; font-weight: 600; }
@@ -63,7 +62,6 @@ QLabel#dialogTitle { color: #f5f8fc; font-size: 17pt; font-weight: 700; padding:
 QLabel#dialogDescription { color: #8fa0b7; font-size: 11pt; padding: 0 2px 8px; }
 QGroupBox { color: #cbd7e7; border: 1px solid #2d3d52; border-radius: 7px; margin-top: 12px; padding: 12px 8px 7px; font-weight: 650; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #9eb2c9; }
-QStatusBar { background: #151c28; color: #8092aa; border-top: 1px solid #202a38; padding-left: 10px; }
 QMenu { background: #1c2635; color: #edf3fb; border: 1px solid #40536b; border-radius: 7px; padding: 7px; }
 QMenu::item { padding: 9px 28px 9px 13px; border-radius: 4px; min-height: 20px; }
 QMenu::item:selected { background: #2c618e; }
@@ -90,9 +88,8 @@ QTreeWidget#siteList::item:selected { background: #cfe4f7; color: #123b60; font-
 QPushButton#settingsButton { text-align: left; background: #edf3f8; color: #1d3e60; border-color: #c7d6e5; }
 QPushButton#settingsButton:hover { background: #dceaf5; }
 QWidget#monitorPanel { background: #f4f7fb; }
-QFrame#monitorHeader { background: #ffffff; border-bottom: 1px solid #dbe3ed; }
-QLabel#siteTitle { color: #13243b; font-size: 20pt; font-weight: 700; }
-QLabel#siteMeta { color: #64758c; font-size: 11pt; }
+QLabel#siteTitle { color: #13243b; font-size: 13pt; font-weight: 700; padding: 0 4px; }
+QLabel#resourceStatus { color: #64758c; font-size: 9pt; }
 QLabel#liveBadge { color: #14733e; background: #e2f5e9; border: 1px solid #a9d9b8; border-radius: 10px; padding: 4px 9px; font-size: 9pt; font-weight: 700; }
 QFrame#controlBar { background: #ffffff; border-bottom: 1px solid #dbe3ed; }
 QLabel#pageLabel { color: #354962; min-width: 80px; font-weight: 600; }
@@ -132,7 +129,6 @@ QLabel#dialogTitle { color: #13243b; font-size: 17pt; font-weight: 700; padding:
 QLabel#dialogDescription { color: #64758c; font-size: 11pt; padding: 0 2px 8px; }
 QGroupBox { color: #344b65; border: 1px solid #cbd7e3; border-radius: 7px; margin-top: 12px; padding: 12px 8px 7px; font-weight: 650; }
 QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #526b87; }
-QStatusBar { background: #ffffff; color: #687c94; border-top: 1px solid #dbe3ed; padding-left: 10px; }
 QMenu { background: #ffffff; color: #1d3048; border: 1px solid #b8c8d8; border-radius: 7px; padding: 7px; }
 QMenu::item { padding: 9px 28px 9px 13px; border-radius: 4px; min-height: 20px; }
 QMenu::item:selected { background: #d7eafa; }
