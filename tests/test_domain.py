@@ -7,6 +7,7 @@ import pytest
 
 from cctv_wall import vendors
 from cctv_wall.models import Camera, Site, Workspace
+from cctv_wall.ui.app import wall_needs_reload
 from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, display_url,
                            redact, stream_from_direct_url)
 
@@ -225,3 +226,30 @@ class TestRedaction:
 
     def test_credential_free_text_is_untouched(self):
         assert redact("failed: rtsp://cam.lan/live") == "failed: rtsp://cam.lan/live"
+
+
+class TestWallNeedsReload:
+    """Closing settings or a site command must not reconnect cameras that did not change."""
+
+    @staticmethod
+    def _workspace(*sites: Site, last: str = "A") -> Workspace:
+        return Workspace(sites=sites, last_site=last)
+
+    def test_nothing_changed(self):
+        ws = self._workspace(Site("A", (Camera(url=RTSP),)), Site("B"))
+        assert not wall_needs_reload(ws, ws, "A")
+
+    def test_another_site_changed(self):
+        before = self._workspace(Site("A", (Camera(url=RTSP),)), Site("B"))
+        after = self._workspace(Site("A", (Camera(url=RTSP),)), Site("B", (Camera(url=RTSP),)))
+        assert not wall_needs_reload(before, after, "A")
+
+    def test_the_site_on_screen_changed(self):
+        before = self._workspace(Site("A", (Camera(url=RTSP),)))
+        after = self._workspace(Site("A", (Camera(url=RTSP, user="x"),)))
+        assert wall_needs_reload(before, after, "A")
+
+    @pytest.mark.parametrize("after_sites,last", [((Site("B"),), "B"), ((Site("A"), Site("A copy")), "A copy")])
+    def test_the_site_on_screen_was_removed_or_replaced(self, after_sites, last):
+        before = self._workspace(Site("A"))
+        assert wall_needs_reload(before, self._workspace(*after_sites, last=last), "A")

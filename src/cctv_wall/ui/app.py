@@ -32,6 +32,18 @@ from cctv_wall.urls import direct_url_with_stream
 FactoryBuilder = Callable[[bool], PlayerFactory]
 WorkspaceSaver = Callable[[Workspace], None]
 NATIVE_SHUTDOWN_DEADLINE_SECONDS = 3.0
+
+
+def wall_needs_reload(before: Workspace, after: Workspace, site_on_screen: str) -> bool:
+    """Reconnecting costs every visible stream, so only a change to the site on screen earns it.
+
+    Its cameras or AI connections changed, it was renamed or removed, or another site
+    became the active one (a duplicate is selected straight away).
+    """
+    active = after.active_site
+    if active is None or active.name != site_on_screen:
+        return True
+    return before.site(site_on_screen) != active
 # Navigation action -> the command that carries it out. Adding one means adding a row.
 SITE_COMMANDS = {
     "duplicate": site_commands.duplicate_site,
@@ -441,9 +453,15 @@ class MainWindow(QMainWindow):
         """None means the operator cancelled, or the command refused the change."""
         if updated is None:
             return
-        self._workspace = updated
+        before, self._workspace = self._workspace, updated
         self._persist()
-        self._reload_sites()
+        self._apply_workspace_change(before)
+
+    def _apply_workspace_change(self, before: Workspace) -> None:
+        if wall_needs_reload(before, self._workspace, self._active_site_name):
+            self._reload_sites()
+        else:
+            self._navigation.set_workspace(self._workspace)
 
     def _on_tiles_changed(self, tiles: int) -> None:
         """Only the page layout changes; the playback backend and its decoders stay."""
@@ -561,9 +579,10 @@ class MainWindow(QMainWindow):
         self._show_current_page()
 
     def _open_settings(self, site_name: str | None = None) -> None:
+        before = self._workspace
         open_editor(self, self._workspace, self._on_workspace_edited, self._translator,
                     initial_site_name=site_name)
-        self._reload_sites()
+        self._apply_workspace_change(before)
 
     def _on_workspace_edited(self, workspace: Workspace) -> None:
         """Each settings action is saved at once; the wall waits until the dialog closes."""
