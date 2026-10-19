@@ -152,12 +152,15 @@ class TestPasswordProtection:
             {"host": "10.0.0.5", "password": "plain"}]}]}), encoding="utf-8")
         assert load_workspace(target).sites[0].cameras[0].password == "plain"
 
-    def test_an_undecryptable_password_becomes_empty_rather_than_failing(self, tmp_path):
+    def test_an_undecryptable_password_survives_a_save(self, tmp_path):
+        """Another Windows account cannot read it, but saving must not erase it either."""
         target = tmp_path / "workspace.json"
+        stored = f"{credentials.PREFIX}AQAAAA=="
         target.write_text(json.dumps({"sites": [{"name": "Office", "cameras": [
-            {"host": "10.0.0.5", "password": f"{credentials.PREFIX}AQAAAA=="}]}]}),
-            encoding="utf-8")
-        assert load_workspace(target).sites[0].cameras[0].password == ""
+            {"host": "10.0.0.5", "password": stored}]}]}), encoding="utf-8")
+        save_workspace(load_workspace(target), target)
+        saved = json.loads(target.read_text(encoding="utf-8"))
+        assert saved["sites"][0]["cameras"][0]["password"] == stored
 
     def test_an_empty_password_stays_empty(self, tmp_path):
         stored = self._saved(tmp_path, "")
