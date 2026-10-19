@@ -60,19 +60,13 @@ class TestPlaybackOptions:
         assert "--avcodec-hw=any" in INSTANCE_ARGS and "--no-audio" in INSTANCE_ARGS
 
     def test_rtsp_streams_are_forced_over_tcp(self):
-        assert ":rtsp-tcp" in media_options_for(RTSP_URL, "auto")
+        assert ":rtsp-tcp" in media_options_for(RTSP_URL)
 
     def test_non_rtsp_streams_are_not(self):
-        assert ":rtsp-tcp" not in media_options_for(HLS_URL, "auto")
-
-    def test_a_quality_cap_limits_adaptive_streams(self):
-        assert ":adaptive-maxheight=720" in media_options_for(HLS_URL, "720p")
-
-    def test_auto_quality_adds_no_cap(self):
-        assert not any("adaptive-maxheight" in option for option in media_options_for(HLS_URL, "auto"))
+        assert ":rtsp-tcp" not in media_options_for(HLS_URL)
 
     def test_shared_stream_tuning_is_carried_through(self):
-        assert ":clock-jitter=0" in media_options_for(RTSP_URL, "auto")
+        assert ":clock-jitter=0" in media_options_for(RTSP_URL)
 
 
 class TestBundledVlc:

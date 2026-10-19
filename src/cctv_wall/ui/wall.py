@@ -150,9 +150,10 @@ class VideoTile(QFrame):
     def _show_stream_menu(self, event: QContextMenuEvent) -> None:
         menu = QMenu(self)
         menu.setTitle(self.camera.label)
-        direct_stream = stream_from_direct_url(self.camera.url) if self.camera.url else None
-        current_stream = direct_stream or self.camera.stream
-        can_switch = (not self.camera.url or direct_stream is not None) and self._on_stream_change is not None
+        # Only a URL that names its stream (".../stream2", "?stream=2") can be switched;
+        # guessing a vendor's URL format would break the camera instead.
+        current_stream = stream_from_direct_url(self.camera.url)
+        can_switch = current_stream is not None and self._on_stream_change is not None
         for stream in range(MIN_STREAM, MAX_STREAM + 1):
             action = QAction(self._translator.t("stream_choice", stream=stream), menu)
             action.setCheckable(True)
@@ -163,7 +164,8 @@ class VideoTile(QFrame):
         menu.exec(event.globalPos())
 
     def _choose_stream(self, stream: int) -> None:
-        if self._on_stream_change is not None and stream != self.camera.stream:
+        if (self._on_stream_change is not None
+                and stream != stream_from_direct_url(self.camera.url)):
             self._on_stream_change(self.camera, stream)
 
 
@@ -441,7 +443,7 @@ class WallView(QWidget):
             logger().info("connecting camera=%s", tile.log_label)
             url = build_url(camera)
             player = self._factory.create()
-            player.play(url, media_options_for(url, camera.quality),
+            player.play(url, media_options_for(url),
                         int(tile.view.surface.winId()))
             tile.player = player
             state = player.state()

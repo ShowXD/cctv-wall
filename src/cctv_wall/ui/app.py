@@ -391,8 +391,7 @@ class MainWindow(QMainWindow):
             self._on_site_selected(site_name)
             return
         if action == "add_camera":
-            open_editor(self, self._workspace, self._on_workspace_saved, self._translator,
-                        initial_site_name=site_name)
+            self._open_settings(site_name)
             return
         command = SITE_COMMANDS.get(action)
         if command is not None:
@@ -508,13 +507,10 @@ class MainWindow(QMainWindow):
 
     def _change_camera_stream(self, camera: Camera, stream: int) -> None:
         """Persist a right-click stream choice, then reconnect only the visible page."""
-        url = ""
-        if camera.url:
-            rewritten = direct_url_with_stream(camera.url, stream)
-            if rewritten is None:
-                return  # no recognisable stream marker: guessing the URL format is unsafe
-            url = rewritten
-        replacement = replace(camera, url=url, stream=stream)
+        url = direct_url_with_stream(camera.url, stream)
+        if url is None:
+            return  # no recognisable stream marker: guessing the URL format is unsafe
+        replacement = replace(camera, url=url)
         updated = self._workspace.with_camera_replaced(camera, replacement)
         if updated is self._workspace:
             return
@@ -524,13 +520,27 @@ class MainWindow(QMainWindow):
         self._persist()
         self._show_current_page()
 
-    def _open_settings(self) -> None:
-        open_editor(self, self._workspace, self._on_workspace_saved, self._translator)
+    def _open_settings(self, site_name: str | None = None) -> None:
+        open_editor(self, self._workspace, self._on_workspace_edited, self._translator,
+                    initial_site_name=site_name)
+        self._apply_tiles_cap()
+        self._reload_sites()
 
-    def _on_workspace_saved(self, workspace: Workspace) -> None:
+    def _on_workspace_edited(self, workspace: Workspace) -> None:
+        """Each settings action is saved at once; the wall waits until the dialog closes."""
         self._workspace = workspace
         self._persist()
-        self._reload_sites()
+        self._navigation.set_workspace(workspace)
+
+    def _apply_tiles_cap(self) -> None:
+        """The settings dialog may have lowered the cap, and with it the page size."""
+        self._tiles_box.blockSignals(True)
+        self._tiles_box.setRange(1, self._workspace.max_tiles)
+        self._tiles_box.setValue(self._workspace.tiles_per_page)
+        self._tiles_box.blockSignals(False)
+        if self._wall.tiles_per_page != self._workspace.tiles_per_page:
+            self._wall.stop()
+            self._wall.configure(self._factory, self._workspace.tiles_per_page)
 
     @property
     def _displayed_cameras(self) -> tuple[Camera, ...]:

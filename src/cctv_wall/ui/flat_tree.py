@@ -51,6 +51,11 @@ class FlatTree(QTreeWidget):
         self.itemExpanded.connect(lambda _item: self.viewport().update())
         self.itemCollapsed.connect(lambda _item: self.viewport().update())
 
+    def collapsed_top_level_texts(self) -> frozenset[str]:
+        """Remember only what was collapsed, so a newly added row still opens after a rebuild."""
+        items = (self.topLevelItem(index) for index in range(self.topLevelItemCount()))
+        return frozenset(item.text(0) for item in items if not item.isExpanded())
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         item = self.itemAt(event.position().toPoint())
         if (item is not None and item.parent() is None and item.childCount()

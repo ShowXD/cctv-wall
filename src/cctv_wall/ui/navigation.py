@@ -104,7 +104,7 @@ class SiteNavigation(QFrame):
     def set_workspace(self, workspace: Workspace) -> None:
         self._workspace = workspace
         current = workspace.active_site.name if workspace.active_site else ""
-        collapsed = self._collapsed_site_names()
+        collapsed = self._sites.collapsed_top_level_texts()
         self._sites.blockSignals(True)
         self._sites.clear()
         for site in workspace.sites:
@@ -124,12 +124,6 @@ class SiteNavigation(QFrame):
                 self._sites.setCurrentItem(item)
         self._sites.blockSignals(False)
         self._count.setText(str(len(workspace.sites)))
-
-    def _collapsed_site_names(self) -> frozenset[str]:
-        """Remember only what was collapsed, so a newly added site still opens."""
-        items = (self._sites.topLevelItem(index)
-                 for index in range(self._sites.topLevelItemCount()))
-        return frozenset(item.text(0) for item in items if not item.isExpanded())
 
     def _item_changed(self, current: QTreeWidgetItem | None,
                       _previous: QTreeWidgetItem | None) -> None:

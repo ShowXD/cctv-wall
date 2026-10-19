@@ -9,10 +9,8 @@ from __future__ import annotations
 import re
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from cctv_wall import vendors
 from cctv_wall.models import Camera
 
-RTSP_SCHEME = "rtsp"
 MASK = "****"
 _STREAM_PATH_TOKEN = re.compile(r"(?i)(stream)([1-4])")
 _STREAM_QUERY_TOKEN = re.compile(r"(?i)([?&]stream=)([1-4])")
@@ -20,41 +18,24 @@ _URL_CREDENTIALS = re.compile(r"(?i)([a-z][a-z0-9+.-]*)://[^@/\s]*@")
 
 
 def build_url(camera: Camera) -> str:
-    """A direct url wins; otherwise assemble rtsp://user:pass@host:port/vendor-path."""
-    if camera.url:
-        return camera.url
-    template = vendors.template_for(camera.vendor, camera.path_template)
-    path = vendors.render_path(template, camera.stream)
-    return f"{RTSP_SCHEME}://{_credentials(camera)}{camera.host}:{camera.port}/{path}"
+    """The playable URL: the camera's url with its credentials put back in."""
+    return _with_credentials(camera.url, camera.user, camera.password)
 
 
 def display_url(camera: Camera) -> str:
     """build_url with the password replaced by asterisks, safe to show on screen."""
-    if camera.url:
-        return _mask_url_password(camera.url)
-    if not camera.user:
-        return build_url(camera)
-    user = quote(camera.user, safe="")
-    return build_url(camera).replace(f"{user}:{_quoted_password(camera)}@",
-                                     f"{user}:{MASK}@", 1)
+    return _with_credentials(camera.url, camera.user, MASK if camera.password else "",
+                             quote_password=False)
 
 
-def _mask_url_password(url: str) -> str:
-    """Redact only a URL password; local paths and credential-free URLs stay untouched."""
-    parsed = urlsplit(url)
-    if parsed.username is None or parsed.password is None or not parsed.hostname:
+def _with_credentials(url: str, user: str, password: str, quote_password: bool = True) -> str:
+    """Insert user:password into a network URL; local paths and empty users stay as they are."""
+    parts = urlsplit(url)
+    if not user or not parts.netloc:
         return url
-    try:
-        port = parsed.port
-    except ValueError:
-        # Leave an invalid URL unchanged so the editor can show its real validation error.
-        return url
-    host = parsed.hostname
-    if ":" in host:
-        host = f"[{host}]"  # Re-add IPv6 brackets removed by urlsplit().
-    endpoint = f"{host}:{port}" if port is not None else host
-    netloc = f"{quote(parsed.username, safe='')}:{MASK}@{endpoint}"
-    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    secret = quote(password, safe="") if quote_password else password
+    userinfo = quote(user, safe="") + (f":{secret}" if password else "")
+    return urlunsplit(parts._replace(netloc=f"{userinfo}@{parts.netloc}"))
 
 
 def redact(text: str) -> str:
@@ -88,12 +69,3 @@ def direct_url_with_stream(url: str, stream: int) -> str | None:
     tail = _STREAM_PATH_TOKEN.sub(lambda match: f"{match.group(1)}{stream}", tail)
     return head + _STREAM_QUERY_TOKEN.sub(lambda match: f"{match.group(1)}{stream}", tail)
 
-
-def _credentials(camera: Camera) -> str:
-    if not camera.user:
-        return ""
-    return f"{quote(camera.user, safe='')}:{_quoted_password(camera)}@"
-
-
-def _quoted_password(camera: Camera) -> str:
-    return quote(camera.password, safe="")

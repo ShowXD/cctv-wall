@@ -46,6 +46,9 @@ class TestLoad:
         assert workspace.active_site.name == "Taipei Office"
         assert len(workspace.active_site.cameras) == 2
         assert workspace.tiles_per_page == 9   # legacy "balanced" profile
+        gate = workspace.active_site.cameras[0]   # legacy host + vendor fields
+        assert (gate.url, gate.user) == ("rtsp://10.0.0.5:554/Streaming/Channels/102", "admin")
+        assert "host" not in gate.as_dict()
         assert workspace.geometry == "1600x900"
         assert workspace.language == "zh_TW"
 
@@ -126,7 +129,7 @@ def target_text(tmp_path) -> str:
 class TestPasswordProtection:
     def _saved(self, tmp_path, password: str) -> dict:
         target = tmp_path / "workspace.json"
-        site = Site(name="Office", cameras=(Camera(host="10.0.0.5", user="admin",
+        site = Site(name="Office", cameras=(Camera(url="rtsp://10.0.0.5/stream1", user="admin",
                                                    password=password),))
         save_workspace(Workspace(sites=(site,)), target)
         return json.loads(target.read_text(encoding="utf-8"))

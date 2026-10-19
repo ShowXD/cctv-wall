@@ -12,8 +12,6 @@ Why these options help on slow machines:
 """
 from __future__ import annotations
 
-from cctv_wall import quality as quality_module
-
 RTSP_PREFIX = "rtsp://"
 
 # VLC is embedded in a Qt native surface.  Let Qt own mouse/keyboard input so double-click
@@ -27,13 +25,10 @@ INSTANCE_ARGS = (
 STREAM_OPTIONS = (":avcodec-skiploopfilter=nonref", ":clock-jitter=0")
 
 
-def media_options_for(url: str, quality: str) -> tuple[str, ...]:
-    """Per-stream libvlc options: transport, size cap and the shared tuning."""
+def media_options_for(url: str) -> tuple[str, ...]:
+    """Per-stream libvlc options: transport plus the shared tuning."""
     options: list[str] = list(STREAM_OPTIONS)
     if url.startswith(RTSP_PREFIX):
         # TCP costs a little latency and buys freedom from packet-loss smearing.
         options.append(":rtsp-tcp")
-    height = quality_module.height_for(quality)
-    if height is not None:
-        options.append(f":adaptive-maxheight={height}")
     return tuple(options)

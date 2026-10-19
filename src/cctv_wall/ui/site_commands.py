@@ -25,7 +25,7 @@ def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator
     source = workspace.site(site_name)
     if source is None:
         return None
-    name = _unique_name(workspace, f"{source.name} {translator.t('copy_suffix')}")
+    name = workspace.unique_site_name(f"{source.name} {translator.t('copy_suffix')}")
     return workspace.with_sites((*workspace.sites,
                                  replace(source, name=name))).with_last_site(name)
 
@@ -78,12 +78,3 @@ def edit_site_ai_feeds(parent: QWidget, workspace: Workspace, translator: Transl
     return workspace.with_sites(replace(site, ai_feeds=feeds) if site.name == source.name else site
                                 for site in workspace.sites)
 
-
-def _unique_name(workspace: Workspace, base: str) -> str:
-    """`base`, or `base 2`, `base 3`… — used where a clash must not stop the operator."""
-    if workspace.site(base) is None:
-        return base
-    number = 2
-    while workspace.site(f"{base} {number}") is not None:
-        number += 1
-    return f"{base} {number}"
