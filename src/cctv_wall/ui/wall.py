@@ -382,13 +382,13 @@ class WallView(QWidget):
     def replace_camera(self, old: Camera, new: Camera) -> bool:
         """Reconnect only the tile showing `old`; the rest of the page keeps playing.
 
-        False means the caller has to rebuild the page instead: the camera is not on it,
-        or the strict-sync backend runs every tile on one shared clock.
+        False means the caller has to rebuild the page instead, because the strict-sync
+        backend runs every tile on one shared clock. A camera not on this page needs nothing.
         """
-        if getattr(self._factory, "synchronized", False):
-            return False
         tile = next((t for t in self._tiles if t.view.camera == old), None)
         if tile is None:
+            return True
+        if getattr(self._factory, "synchronized", False):
             return False
         tile.view.set_camera(new)
         tile.log_label = new.name or tile.log_label

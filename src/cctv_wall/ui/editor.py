@@ -9,18 +9,16 @@ from dataclasses import replace
 from typing import Callable
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMenu,
-                               QMessageBox, QPushButton, QSplitter, QTreeWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QMenu, QMessageBox, QPushButton, QSplitter,
+                               QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
+from cctv_wall.ui.camera_form import CameraForm
 from cctv_wall.ui.flat_tree import FlatTree
 
-CAMERA_FIELDS = ("name", "url", "user", "password")
-FIELD_LABEL_KEYS = {"name": "name", "url": "direct_url", "user": "username", "password": "password"}
 ROW_HEIGHT = 38
 
 
@@ -34,7 +32,6 @@ class WorkspaceEditor(QDialog):
         self._on_change = on_change
         self._site_index: int | None = None
         self._camera_index: int | None = None   # None with a site selected = a new camera
-        self._fields: dict[str, QLineEdit] = {}
         self.setWindowTitle(translator.t("settings_title"))
         self.resize(900, 560)
         self._build_ui()
@@ -71,22 +68,9 @@ class WorkspaceEditor(QDialog):
     def _camera_panel(self) -> QWidget:
         panel = QWidget()
         box = QVBoxLayout(panel)
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        for key in CAMERA_FIELDS:
-            field = QLineEdit()
-            if key == "password":
-                field.setEchoMode(QLineEdit.EchoMode.Password)
-            if key == "url":
-                field.setPlaceholderText("rtsp://192.168.1.10:554/stream1")
-            field.returnPressed.connect(self._save_camera)
-            self._fields[key] = field
-            form.addRow(self._translator.t(FIELD_LABEL_KEYS[key]), field)
-        box.addLayout(form)
-        self._error = QLabel()
-        self._error.setProperty("invalid", True)
-        self._error.setWordWrap(True)
-        box.addWidget(self._error)
+        self._form = CameraForm(self._translator)
+        self._form.submitted.connect(self._save_camera)
+        box.addWidget(self._form)
         buttons = QHBoxLayout()
         self._new_button = QPushButton(self._translator.t("add_camera"))
         self._new_button.clicked.connect(self._new_camera)
@@ -175,9 +159,9 @@ class WorkspaceEditor(QDialog):
             workspace = build()
         except ValueError as error:
             logger().warning("settings change refused: %s", error)
-            self._error.setText(str(error))
+            self._form.show_error(str(error))
             return False
-        self._error.clear()
+        self._form.show_error("")
         self._workspace = workspace
         self._on_change(workspace)
         self._reload_tree()
@@ -209,16 +193,14 @@ class WorkspaceEditor(QDialog):
         self._select(self._site_index)
         self._camera_index = None
         self._fill_form(None)
-        self._fields["name"].setFocus()
+        self._form.focus_name()
         self._refresh_buttons()
 
     def _save_camera(self) -> None:
         if self._site_index is None:
             return
-        try:
-            camera = Camera.from_raw({key: field.text() for key, field in self._fields.items()})
-        except ValueError as error:
-            self._error.setText(str(error))
+        camera = self._form.read_camera()
+        if camera is None:
             return
         site_index = self._site_index
         cameras = list(self._site.cameras)
@@ -307,14 +289,11 @@ class WorkspaceEditor(QDialog):
     # ---- form ---------------------------------------------------------------------------
 
     def _fill_form(self, camera: Camera | None) -> None:
-        self._error.clear()
-        for key, field in self._fields.items():
-            field.setText(getattr(camera, key) if camera is not None else "")
+        self._form.set_camera(camera)
 
     def _refresh_buttons(self) -> None:
         has_site = self._site_index is not None
-        for widget in (self._new_button, self._save_button, self._delete_button,
-                       *self._fields.values()):
+        for widget in (self._new_button, self._save_button, self._delete_button, self._form):
             widget.setEnabled(has_site)
 
 

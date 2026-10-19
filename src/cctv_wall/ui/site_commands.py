@@ -14,9 +14,12 @@ from dataclasses import replace
 
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
+from collections.abc import Iterable
+
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Workspace
+from cctv_wall.models import Camera, Workspace
 from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
+from cctv_wall.ui.camera_form import edit_camera
 
 
 def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator,
@@ -78,3 +81,43 @@ def edit_site_ai_feeds(parent: QWidget, workspace: Workspace, translator: Transl
     return workspace.with_sites(replace(site, ai_feeds=feeds) if site.name == source.name else site
                                 for site in workspace.sites)
 
+
+def add_camera(parent: QWidget, workspace: Workspace, translator: Translator,
+               site_name: str) -> Workspace | None:
+    """Add one camera to a site from a small dialog, without opening the whole settings window."""
+    site = workspace.site(site_name)
+    if site is None:
+        return None
+    return edit_camera(parent, translator, None,
+                       lambda camera: _with_cameras(workspace, site_name, (*site.cameras, camera)))
+
+
+# Camera commands also receive the camera's position within its site.
+
+def edit_camera_at(parent: QWidget, workspace: Workspace, translator: Translator,
+                   site_name: str, index: int) -> Workspace | None:
+    site = workspace.site(site_name)
+    if site is None or not 0 <= index < len(site.cameras):
+        return None
+    before, after = site.cameras[:index], site.cameras[index + 1:]
+    return edit_camera(parent, translator, site.cameras[index],
+                       lambda camera: _with_cameras(workspace, site_name, (*before, camera, *after)))
+
+
+def delete_camera_at(parent: QWidget, workspace: Workspace, translator: Translator,
+                     site_name: str, index: int) -> Workspace | None:
+    site = workspace.site(site_name)
+    if site is None or not 0 <= index < len(site.cameras):
+        return None
+    answer = QMessageBox.question(parent, translator.t("delete_camera"),
+                                  translator.t("delete_camera_confirm", name=site.cameras[index].label))
+    if answer != QMessageBox.StandardButton.Yes:
+        return None
+    return _with_cameras(workspace, site_name, site.cameras[:index] + site.cameras[index + 1:])
+
+
+def _with_cameras(workspace: Workspace, site_name: str, cameras: Iterable[Camera]) -> Workspace:
+    """Raises ValueError when the site rejects them (e.g. duplicate names with AI connections)."""
+    cameras = tuple(cameras)
+    return workspace.with_sites(site.with_cameras(cameras) if site.name == site_name else site
+                                for site in workspace.sites)

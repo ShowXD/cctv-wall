@@ -12,7 +12,7 @@ import pytest
 
 from cctv_wall.i18n import LANGUAGE_LABELS, _MESSAGES, Translator
 from cctv_wall.models import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
-from cctv_wall.ui.editor import FIELD_LABEL_KEYS
+from cctv_wall.ui.camera_form import FIELD_LABEL_KEYS
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "cctv_wall"
 # A whole `t(...)` argument list — `_text(raw.get("x"))` also ends in `t(`, so require a

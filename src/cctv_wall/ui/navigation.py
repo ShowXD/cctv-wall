@@ -78,11 +78,13 @@ class SiteNavigation(QFrame):
                  on_settings_requested: Callable[[], None],
                  on_site_action: Callable[[str, str], None], translator: Translator,
                  on_camera_selected: Callable[[str, Camera], None] | None = None,
-                 on_reorder: Callable[[Workspace], None] | None = None) -> None:
+                 on_reorder: Callable[[Workspace], None] | None = None,
+                 on_camera_action: Callable[[str, str, int], None] | None = None) -> None:
         super().__init__()
         self.setObjectName("siteNavigation")
         self.setMinimumWidth(160)
         self._on_site_selected = on_site_selected
+        self._on_camera_action = on_camera_action
         self._translator = translator
         self._on_site_action = on_site_action
         self._on_camera_selected = on_camera_selected
@@ -191,17 +193,20 @@ class SiteNavigation(QFrame):
         site_name, camera_index = _reference(item)
         menu = QMenu(self)
         menu.setMinimumWidth(200)
-        self._add_action(menu, self._translator.t("watch_site"), "watch", site_name)
+        # A click already watches a site or enlarges a camera, so the menu only edits.
         if camera_index is None:
-            menu.addSeparator()
             self._add_action(menu, self._translator.t("add_camera_action"), "add_camera", site_name)
             self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
             self._add_action(menu, self._translator.t("rename"), "rename", site_name)
             self._add_action(menu, self._translator.t("ai_feeds_action"), "ai_feeds", site_name)
             menu.addSeparator()
             self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
-        else:
-            self._add_action(menu, self._translator.t("edit_cameras"), "add_camera", site_name)
+        elif self._on_camera_action is not None:
+            for text, action in ((self._translator.t("edit_camera"), "edit_camera"),
+                                 (self._translator.t("delete_camera"), "delete_camera")):
+                item = menu.addAction(text)
+                item.triggered.connect(lambda _checked=False, chosen=action:
+                                       self._on_camera_action(chosen, site_name, camera_index))
         menu.exec(self._sites.viewport().mapToGlobal(position))
 
     def _add_action(self, menu: QMenu, label: str, action: str, site_name: str) -> None:

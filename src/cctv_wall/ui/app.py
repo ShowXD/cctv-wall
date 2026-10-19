@@ -50,6 +50,11 @@ SITE_COMMANDS = {
     "rename": site_commands.rename_site,
     "delete": site_commands.delete_site,
     "ai_feeds": site_commands.edit_site_ai_feeds,
+    "add_camera": site_commands.add_camera,
+}
+CAMERA_COMMANDS = {
+    "edit_camera": site_commands.edit_camera_at,
+    "delete_camera": site_commands.delete_camera_at,
 }
 
 
@@ -124,7 +129,8 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(1)
         self._navigation = SiteNavigation(self._on_site_selected, self._open_settings,
                                           self._on_site_action, self._translator,
-                                          self._on_camera_selected, self._on_sites_reordered)
+                                          self._on_camera_selected, self._on_sites_reordered,
+                                          self._on_camera_action)
         splitter.addWidget(self._navigation)
         self._ai_panel = AiEventPanel(
             self._translator,
@@ -443,15 +449,26 @@ class MainWindow(QMainWindow):
         An empty site name means "the site on screen" (the sidebar's AI button).
         """
         site_name = site_name or self._active_site_name
-        if action == "watch":
-            self._on_site_selected(site_name)
-            return
-        if action == "add_camera":
-            self._open_settings(site_name)
-            return
         command = SITE_COMMANDS.get(action)
         if command is not None:
             self._apply_site_command(command(self, self._workspace, self._translator, site_name))
+
+    def _on_camera_action(self, action: str, site_name: str, index: int) -> None:
+        """Edit or delete one camera from the sidebar; an edited camera on screen reconnects alone."""
+        command = CAMERA_COMMANDS.get(action)
+        site = self._workspace.site(site_name)
+        if command is None or site is None or not 0 <= index < len(site.cameras):
+            return
+        old = site.cameras[index]
+        updated = command(self, self._workspace, self._translator, site_name, index)
+        if updated is None:
+            return
+        before, self._workspace = self._workspace, updated
+        self._persist()
+        if action == "edit_camera" and site_name == self._active_site_name:
+            self._show_replaced_camera(old, updated.site(site_name).cameras[index])
+        else:
+            self._apply_workspace_change(before)
 
     def _apply_site_command(self, updated: Workspace | None) -> None:
         """None means the operator cancelled, or the command refused the change."""
