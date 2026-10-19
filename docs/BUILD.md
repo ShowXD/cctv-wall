@@ -221,7 +221,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
    `libvlc` 那行要有版本號才算過關。
 3. 把設定檔 `workspace.json` 放到 `CCTVWall.exe` 旁邊
    （可從 [`workspace.example.json`](../workspace.example.json) 複製修改，
-   或直接開程式用左下角的「管理設定」建立）。
+   或直接開程式用左下角的「地點與攝影機」建立）。
 4. 要放到別的路徑：設環境變數 `CCTV_WALL_CONFIG=D:\config\workspace.json`。
 5. 要開機自動啟動：把 `CCTVWall.exe` 的捷徑丟進
    `shell:startup`（`Win+R` 輸入這串即可開啟該資料夾）。
@@ -234,7 +234,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
 ### 換機器 / 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **227 passed**。
+2. `uv run --group dev pytest -q` → 應為 **232 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

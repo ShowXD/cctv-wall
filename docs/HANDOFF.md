@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 227 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 232 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **227 passed**（2026-10-19，分支 `refactor/ui-redesign`，`.venv/Scripts/python -m pytest -q`） |
+| 測試 | **232 passed**（2026-10-19，分支 `refactor/ui-redesign`，`.venv/Scripts/python -m pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -55,6 +55,19 @@ navbar（選單列）已提出分流建議但使用者暫不實作。
   超出螢幕或低於最小高度 600 時固定高度改調寬度）。分隔欄改為只讓影像牆吸收寬度變化，否則加寬時
   多出的寬度會被側欄分走、比例對不上。實測 4／6／9 格開窗後每格 1.774–1.778。
 - 另修：側欄清單下方多了一個 stretch，清單只用半個側欄高度，攝影機多時被截斷。
+
+第三輪（232 passed）：
+- 不必要的重新連線：`app.wall_needs_reload` 判斷畫面上的地點（攝影機、AI 連線、名稱、是否仍為使用中）
+  有沒有變；關閉設定視窗、側欄地點指令都經 `_apply_workspace_change`，沒變只更新側欄。
+- 單台重連：`WallView.replace_camera` 只 release／start 那一格（同 `_retry_camera` 作法），攝影機不在本頁
+  時什麼都不做；嚴格同步（`factory.synchronized`）共用時鐘，回傳 False 讓呼叫端整頁重建。用於右鍵切串流
+  與側欄「編輯攝影機…」。
+- 側欄底部拆成「地點與攝影機」「AI 辨識連線…」兩顆（上下排，側欄最窄 160px 並排放不下）；AI 按鈕作用在目前地點
+  （`_on_site_action` 收到空地點名稱即目前地點）。
+- 單台攝影機：表單抽成 `ui/camera_form.CameraForm`（設定視窗與 `CameraDialog` 共用）；側欄右鍵地點
+  「新增攝影機…」、攝影機「編輯攝影機…／刪除攝影機」走 `site_commands` 與 `app.CAMERA_COMMANDS`；
+  移除兩處「觀看此地點」（點一下本來就會觀看／放大）。
+- 截圖中某個欄位標籤看起來帶顏色，是 ClearType 子像素邊緣，實測所有標籤前景色都是同一色，不是 bug。
 
 使用者逐項檢視功能清單後的決定與實作：
 
@@ -317,7 +330,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **227 passed**。
+2. `uv run --group dev pytest -q` → 應為 **232 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。
