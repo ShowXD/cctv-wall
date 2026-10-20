@@ -9,7 +9,7 @@ from dataclasses import replace
 from typing import Callable
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QMenu, QMessageBox, QPushButton, QSplitter,
+from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from cctv_wall.event_log import logger
@@ -20,6 +20,8 @@ from cctv_wall.ui.camera_form import CameraForm
 from cctv_wall.ui.flat_tree import FlatTree
 
 ROW_HEIGHT = 38
+MARGIN = 16          # window edge and the gap between the two panes
+GROUP_SPACING = 8    # between buttons of one group
 
 
 class WorkspaceEditor(QDialog):
@@ -46,44 +48,52 @@ class WorkspaceEditor(QDialog):
     # ---- layout -------------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        # One margin around and between the two panes; tighter spacing only inside a group
+        # of related buttons, a wider gap between groups.
         layout = QVBoxLayout(self)
-        splitter = QSplitter()
+        layout.setContentsMargins(MARGIN, MARGIN, MARGIN, MARGIN)
+        layout.setSpacing(MARGIN)
+        body = QHBoxLayout()
+        body.setSpacing(MARGIN)
         self._tree = FlatTree()
         self._tree.itemSelectionChanged.connect(self._on_tree_select)
         self._tree.itemChanged.connect(self._apply_inline_name)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_tree_menu)
-        splitter.addWidget(self._tree)
-        splitter.addWidget(self._camera_panel())
-        splitter.setSizes([320, 580])
-        layout.addWidget(splitter, 1)
-
-        bottom = QHBoxLayout()
-        bottom.addStretch(1)
-        close = QPushButton(self._translator.t("close"))
-        close.clicked.connect(self.accept)
-        bottom.addWidget(close)
-        layout.addLayout(bottom)
-
-    def _camera_panel(self) -> QWidget:
-        panel = QWidget()
-        box = QVBoxLayout(panel)
+        # An empty list has nothing to right-click on, so it offers the first site itself.
+        self._add_site_button = QPushButton(self._translator.t("add_site"))
+        self._add_site_button.clicked.connect(self._add_site)
+        QVBoxLayout(self._tree.viewport()).addWidget(self._add_site_button, 0,
+                                                     Qt.AlignmentFlag.AlignCenter)
+        sites_column = QVBoxLayout()
+        sites_column.setSpacing(GROUP_SPACING)
+        sites_column.addWidget(QLabel(self._translator.t("site_list")))
+        sites_column.addWidget(self._tree, 1)
+        body.addLayout(sites_column, 1)
         self._form = CameraForm(self._translator)
         self._form.submitted.connect(self._save_camera)
-        box.addWidget(self._form)
-        buttons = QHBoxLayout()
-        self._new_button = QPushButton(self._translator.t("add_camera"))
+        form_column = QVBoxLayout()
+        form_column.setSpacing(GROUP_SPACING)
+        # Its own heading keeps the fields level with the site list.
+        form_column.addWidget(QLabel(self._translator.t("camera_details")))
+        form_column.addWidget(self._form)
+        form_column.addStretch(1)
+        body.addLayout(form_column, 2)
+        layout.addLayout(body, 1)
+
+        # No Close button: every action is already saved, and the title bar closes the dialog.
+        bottom = QHBoxLayout()
+        bottom.setSpacing(GROUP_SPACING)
+        bottom.addStretch(1)
+        self._new_button = QPushButton(self._translator.t("add"))
         self._new_button.clicked.connect(self._new_camera)
-        self._save_button = QPushButton(self._translator.t("save_camera"))
-        self._save_button.clicked.connect(self._save_camera)
         self._delete_button = QPushButton(self._translator.t("delete"))
         self._delete_button.clicked.connect(self._delete_selected)
-        for button in (self._new_button, self._save_button, self._delete_button):
-            buttons.addWidget(button)
-        buttons.addStretch(1)
-        box.addLayout(buttons)
-        box.addStretch(1)
-        return panel
+        self._save_button = QPushButton(self._translator.t("save_camera"))
+        self._save_button.clicked.connect(self._save_camera)
+        for button in (self._new_button, self._delete_button, self._save_button):
+            bottom.addWidget(button)
+        layout.addLayout(bottom)
 
     # ---- tree ---------------------------------------------------------------------------
 
@@ -98,6 +108,7 @@ class WorkspaceEditor(QDialog):
                 site_item.addChild(self._tree_item(camera.label, (site_index, camera_index)))
             site_item.setExpanded(site.name not in collapsed)
         self._tree.blockSignals(False)
+        self._add_site_button.setVisible(not self._workspace.sites)
 
     @staticmethod
     def _tree_item(text: str, reference: tuple[int, int | None]) -> QTreeWidgetItem:
