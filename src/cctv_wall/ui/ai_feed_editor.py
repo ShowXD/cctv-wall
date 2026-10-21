@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
                                QGroupBox, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
@@ -19,6 +19,7 @@ from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_CAMERA_KEY
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site
+from cctv_wall.ui.ai_panel import short_camera_name
 
 # Message-format settings change per project, not per site visit, so they stay as
 # JSON text instead of a widget for every option.
@@ -118,6 +119,9 @@ def feeds_from_forms(site_name: str, cameras: Iterable[Camera],
     return tuple(feeds)
 
 
+CHECK_ROOM = 44   # check box, its gap and the item padding, in pixels
+
+
 class _CodePicker(QWidget):
     """A field and the codes ticked under it, both offered from the message format's labels."""
 
@@ -149,6 +153,7 @@ class _CodePicker(QWidget):
             self._values.setWrapping(True)
             self._values.setResizeMode(QListWidget.ResizeMode.Adjust)
             self._values.setSpacing(4)
+            self._values.setTextElideMode(Qt.TextElideMode.ElideNone)
             self._values.setMaximumHeight(100)   # two or three wrapped rows of kinds
         box.addWidget(self._values)
 
@@ -170,8 +175,15 @@ class _CodePicker(QWidget):
     def _show_values(self, checked: Sequence[str]) -> None:
         self._values.clear()
         for code, text in self._fields.get(self.key(), []):
-            item = QListWidgetItem(f"{text}  ({code})")
+            label = f"{text}  ({code})"
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, code)
+            if self._values.isWrapping():
+                # Side by side, the view sizes an item by its text alone and leaves out the
+                # style sheet's check box, so the text would be cut short.
+                metrics = self._values.fontMetrics()
+                item.setSizeHint(QSize(metrics.horizontalAdvance(label) + CHECK_ROOM,
+                                       metrics.height() + 10))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if code in checked else Qt.CheckState.Unchecked)
             self._values.addItem(item)
@@ -308,7 +320,7 @@ class AiFeedsDialog(QDialog):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._table.verticalHeader().hide()
         self._table.setMinimumHeight(140)   # header + four mappings without scrolling
         mapping_box.addWidget(self._table)
@@ -425,7 +437,7 @@ class AiFeedsDialog(QDialog):
         for row in range(self._table.rowCount()):
             combo = self._table.cellWidget(row, 1)
             source = self._table.item(row, 0).text()
-            rows.append((source, combo.currentText() if isinstance(combo, QComboBox) else ""))
+            rows.append((source, (combo.currentData() or "") if isinstance(combo, QComboBox) else ""))
             if self._table.cellWidget(row, 2).rule:
                 filters[source.strip()] = self._table.cellWidget(row, 2).rule
         tile_key = self._tile_rows.key()
@@ -445,11 +457,14 @@ class AiFeedsDialog(QDialog):
         self._table.insertRow(row)
         self._table.setItem(row, 0, QTableWidgetItem(source))
         combo = QComboBox()
-        names = list(self._camera_names)
-        if camera and camera not in names:
-            names.append(camera)   # keep a mapping to a renamed camera visible, not dropped
-        combo.addItems(names)
-        combo.setCurrentIndex(names.index(camera) if camera else -1)
+        labels = list(self._camera_names)
+        if camera and camera not in labels:
+            labels.append(camera)   # keep a mapping to a renamed camera visible, not dropped
+        # An unnamed camera's label is its whole URL; the host is what fits and tells them apart.
+        for label in labels:
+            combo.addItem(short_camera_name(label), label)
+            combo.setItemData(combo.count() - 1, label, Qt.ItemDataRole.ToolTipRole)
+        combo.setCurrentIndex(labels.index(camera) if camera else -1)
         self._table.setCellWidget(row, 1, combo)
         button = _FilterButton(self._translator)
         button.show_rule(self._label_fields)
