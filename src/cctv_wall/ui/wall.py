@@ -421,10 +421,10 @@ class WallView(QWidget):
                                            now - tile.last_stats_at, tile.reconnects))
             tile.last_stats, tile.last_stats_at = stats, now
 
-    def show_ai_event(self, camera_label: str, text: str, colour: str, line: int = 0) -> None:
+    def show_ai_event(self, camera: Camera, text: str, colour: str, line: int = 0) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
         for tile in self._tiles:
-            if tile.view.camera.label == camera_label:
+            if tile.view.camera == camera:
                 tile.view.show_ai_event(text, colour, line)
 
     def stop(self) -> None:

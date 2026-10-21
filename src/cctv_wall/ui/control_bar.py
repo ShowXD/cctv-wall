@@ -17,6 +17,7 @@ from cctv_wall.ui.theme import painted_icon
 # character renders tiny in Segoe UI.
 ICON_COLOUR = QColor("#7f93ab")
 ICON_SIZE = 36
+TITLE_MAX_WIDTH = 220   # several picked sites make a long title; the rest goes to the tooltip
 
 
 def _outline(painter: QPainter) -> None:
@@ -184,7 +185,10 @@ class ControlBar(QFrame):
         return button
 
     def show_status(self, site_name: str, live: int, visible: int, page: int, pages: int) -> None:
-        self._site_title.setText(site_name or self._translator.t("no_site"))
+        title = site_name or self._translator.t("no_site")
+        self._site_title.setText(self._site_title.fontMetrics().elidedText(
+            title, Qt.TextElideMode.ElideRight, TITLE_MAX_WIDTH))
+        self._site_title.setToolTip(title)
         self._live_badge.setText(self._translator.t("live", live=live, total=visible))
         self._page_label.setText(self._translator.t("page", current=page + 1, total=pages))
 

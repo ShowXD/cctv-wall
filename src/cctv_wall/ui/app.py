@@ -77,8 +77,8 @@ class MainWindow(QMainWindow):
         self._factory_builder = build_factory
         self._factory = self._create_factory(workspace.strict_sync)
         self._focused_camera: Camera | None = None
-        # Ctrl+clicked cameras of the site on screen; empty = all of them.
-        self._picked_cameras: tuple[Camera, ...] = ()
+        # Ctrl+clicked (site name, camera) pairs, from any sites; empty = the site on screen.
+        self._picked_cameras: tuple[tuple[str, Camera], ...] = ()
         self._page_before_focus = 0
         self._is_shutdown = False
         self._view = ViewMode()
@@ -140,9 +140,9 @@ class MainWindow(QMainWindow):
         self._ai_panel = AiEventPanel(
             self._translator,
             # The wall and the bar are built after the panel, so these look them up when called.
-            on_event_shown=lambda camera_label, text, colour, line: self._wall.show_ai_event(
-                camera_label, text, colour, line),
-            on_camera_chosen=lambda camera: self._on_camera_selected(self._active_site_name, camera),
+            on_event_shown=lambda camera, text, colour, line: self._wall.show_ai_event(
+                camera, text, colour, line),
+            on_camera_chosen=self._on_camera_selected,
             on_connection_change=lambda connected, total: self._control_bar.show_ai_connection(
                 connected, total))
         splitter.addWidget(self._monitor_panel())
@@ -278,7 +278,7 @@ class MainWindow(QMainWindow):
         cameras = self._displayed_cameras
         self._page = layout.clamp_page(self._page, len(cameras), self._wall.tiles_per_page)
         self._wall.show_page(cameras, self._page)
-        self._ai_panel.watch(self._site)
+        self._ai_panel.watch(self._watched_sites)
         self._refresh_ai_panel()
         self._refresh_status()
 
@@ -293,7 +293,7 @@ class MainWindow(QMainWindow):
         total = len(self._displayed_cameras)
         visible = min(self._wall.tiles_per_page,
                       max(total - self._page * self._wall.tiles_per_page, 0))
-        self._control_bar.show_status(self._active_site_name, self._wall.playing_count, visible,
+        self._control_bar.show_status(self._wall_title, self._wall.playing_count, visible,
                                       self._page, self._wall.page_count(total))
         self._control_bar.show_resources(self._usage, self._wall.allocated_player_count)
 
@@ -315,11 +315,9 @@ class MainWindow(QMainWindow):
             self._clear_picked_cameras()   # the site row again: back to all of its cameras
             return
         self._picked_cameras = ()
-        self._active_site_name = site_name
-        self._workspace = self._workspace.with_last_site(site_name)
+        self._remember_site(site_name)
         self._page = 0
         self._show_current_page()
-        self._persist()
 
     def _on_camera_selected(self, site_name: str, camera: Camera) -> None:
         """Jump to one camera: switch site, turn to its page, then enlarge it.
@@ -341,22 +339,45 @@ class MainWindow(QMainWindow):
             self._show_current_page()
         self._toggle_camera_focus(camera)
 
-    def _on_cameras_picked(self, site_name: str, indices: tuple[int, ...]) -> None:
-        """Ctrl+clicked cameras: two or more fill the wall on their own, one is enlarged, none
-        puts the whole site back. Nothing is saved; another site or Esc ends it."""
+    def _on_cameras_picked(self, picks: tuple[tuple[str, int], ...]) -> None:
+        """Ctrl+clicked cameras, from any sites: two or more fill the wall on their own, one is
+        enlarged, none puts the site on screen back. Nothing is saved; a site row, a plain
+        click or Esc ends it."""
         self._exit_camera_focus_if_needed()
-        if site_name != self._active_site_name:
-            self._on_site_selected(site_name)
-        site = self._workspace.site(site_name)
-        cameras = tuple(site.cameras[i] for i in indices if 0 <= i < len(site.cameras)) if site else ()
-        if len(cameras) < 2:
+        chosen = []
+        for site_name, index in picks:
+            site = self._workspace.site(site_name)
+            if site is not None and 0 <= index < len(site.cameras):
+                chosen.append((site_name, site.cameras[index]))
+        if len(chosen) < 2:
             self._clear_picked_cameras()
-            if cameras:   # turns to its page first when the site has more than one
-                self._on_camera_selected(site_name, cameras[0])
+            if chosen:   # turns to its page first when the site has more than one
+                self._on_camera_selected(*chosen[0])
             return
-        self._picked_cameras = cameras
+        sites = {site_name for site_name, _camera in chosen}
+        if len(sites) == 1 and self._active_site_name not in sites:
+            self._remember_site(sites.pop())   # all from one other site: it becomes the one on screen
+        self._picked_cameras = tuple(chosen)
         self._page = 0
         self._show_current_page()
+
+    def _remember_site(self, site_name: str) -> None:
+        self._active_site_name = site_name
+        self._workspace = self._workspace.with_last_site(site_name)
+        self._persist()
+
+    @property
+    def _watched_sites(self) -> tuple[Site, ...]:
+        """AI connections follow the wall: every site a picked camera comes from."""
+        if self._picked_cameras:
+            names = dict.fromkeys(site_name for site_name, _camera in self._picked_cameras)
+            return tuple(site for site in map(self._workspace.site, names) if site is not None)
+        return (self._site,) if self._site is not None else ()
+
+    @property
+    def _wall_title(self) -> str:
+        names = [site.name for site in self._watched_sites] or [self._active_site_name]
+        return self._translator.t("list_separator").join(names)
 
     def _clear_picked_cameras(self) -> None:
         if self._picked_cameras:
@@ -395,7 +416,8 @@ class MainWindow(QMainWindow):
             return
         before, self._workspace = self._workspace, updated
         self._persist()
-        if action == "edit_camera" and site_name == self._active_site_name:
+        if action == "edit_camera" and (site_name == self._active_site_name
+                                        or (site_name, old) in self._picked_cameras):
             self._show_replaced_camera(old, updated.site(site_name).cameras[index])
         else:
             self._apply_workspace_change(before)
@@ -412,7 +434,9 @@ class MainWindow(QMainWindow):
         if wall_needs_reload(before, self._workspace, self._active_site_name):
             self._reload_sites()
         else:
+            # The tree is rebuilt without the picks, and a picked camera may have just changed.
             self._navigation.set_workspace(self._workspace)
+            self._clear_picked_cameras()
 
     def _on_tiles_changed(self, tiles: int) -> None:
         """Only the page layout changes; the playback backend and its decoders stay."""
@@ -532,7 +556,8 @@ class MainWindow(QMainWindow):
         """One edited camera reconnects alone, unless strict sync forces the whole page."""
         if self._focused_camera == old:
             self._focused_camera = new
-        self._picked_cameras = tuple(new if c == old else c for c in self._picked_cameras)
+        self._picked_cameras = tuple((site_name, new if camera == old else camera)
+                                     for site_name, camera in self._picked_cameras)
         self._navigation.set_workspace(self._workspace)
         if not self._wall.replace_camera(old, new):
             self._show_current_page()
@@ -554,7 +579,7 @@ class MainWindow(QMainWindow):
     def _displayed_cameras(self) -> tuple[Camera, ...]:
         if self._focused_camera is not None:
             return (self._focused_camera,)
-        return self._picked_cameras or self._cameras
+        return tuple(camera for _site, camera in self._picked_cameras) or self._cameras
 
     def _toggle_camera_focus(self, camera: Camera) -> None:
         """Reflow an existing tile; focus must never tear down a healthy RTSP session.
