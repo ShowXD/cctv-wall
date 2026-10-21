@@ -1,16 +1,20 @@
-"""掉線重連的退避節奏。
+"""掉線重連的退避節奏，以及畫格下方 AI 結果條的重繪成本。
 
-只測與 Qt 無關的計數邏輯：建立真正的 WallView 需要 QApplication，
-而這裡要守住的規則是「多久重試一次」，不是 widget 行為。
+退避只測與 Qt 無關的計數邏輯：這裡要守住的規則是「多久重試一次」，不是 widget 行為。
 """
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # 不需要螢幕也能建立 widget
+
+from PySide6.QtWidgets import QApplication
 
 from cctv_wall.i18n import Translator
 from cctv_wall.player import PlaybackState
 from cctv_wall.ui.view_mode import ViewMode
-from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _Tile,
+from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _AiLine, _Tile,
                                _due_for_retry, _release_detached)
 
 
@@ -77,6 +81,21 @@ class TestOutageNotice:
 
     def test_a_tile_being_retried_says_so_instead(self):
         assert "Reconnecting" in self._message(_tile(), retried=True)
+
+
+class TestAiLine:
+    def test_a_lit_line_is_not_restyled_by_each_new_result(self):
+        # 每次 setStyleSheet 都會重新解析全站樣式表；AI 端每秒送好幾筆，低階電腦會吃不消。
+        _app = QApplication.instance() or QApplication([])   # 變數撐住它，widget 才能存在
+        line = _AiLine()
+        styled = []
+        line.setStyleSheet = lambda sheet: styled.append(sheet)
+        line.show_result("12:00:00  a", "#e5534b")
+        line.show_result("12:00:01  b", "#e5534b")
+        line.show_result("12:00:02  c", "#e5534b")
+        assert len(styled) == 1 and line.text() == "12:00:02  c"
+        line.show_result("12:00:03  d", "#3fb950")   # 換顏色就要重設
+        assert len(styled) == 2
 
 
 class TestViewMode:

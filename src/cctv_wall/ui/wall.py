@@ -7,7 +7,7 @@ from typing import Callable, Sequence
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction, QContextMenuEvent, QMouseEvent
-from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget
 
 from cctv_wall import layout
 from cctv_wall.event_log import logger
@@ -21,6 +21,9 @@ from cctv_wall.urls import build_url, redact, stream_from_direct_url
 FIRST_AUDIT_MS = 9000
 AUDIT_INTERVAL_MS = 5000
 PLAYBACK_CONFIRMATION_INTERVAL_MS = 250
+# The quick check only covers the first connections; past this the 5 s audit takes over, so a
+# camera stuck connecting does not keep a 250 ms timer running for the whole session.
+PLAYBACK_CONFIRMATION_TICKS = 120
 AI_FLASH_MS = 1000
 STATE_EXPLANATION_KEYS = {
     PlaybackState.OPENING: "connection_waiting",
@@ -59,6 +62,9 @@ class _AiLine(QLabel):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("tileAi")
+        # A long result must not widen the tile: that re-lays out the grid and resizes the
+        # native video windows beside it. The tooltip keeps the full text.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self._colour = ""
         self._flash = QTimer(self)
         self._flash.setSingleShot(True)
@@ -66,8 +72,11 @@ class _AiLine(QLabel):
         self._flash.timeout.connect(self._settle)
 
     def show_result(self, text: str, colour: str) -> None:
-        self._colour = colour
-        self.setStyleSheet(f"border-left: 4px solid {colour}; background: {colour}; color: #0b0f14;")
+        # Restyling re-parses the application style sheet; a line that is already lit in this
+        # colour only needs its timer restarted.
+        if not (self._flash.isActive() and colour == self._colour):
+            self._colour = colour
+            self.setStyleSheet(f"border-left: 4px solid {colour}; background: {colour}; color: #0b0f14;")
         self._flash.start()
         self.setText(text)
         self.setToolTip(text)
@@ -137,6 +146,10 @@ class VideoTile(QFrame):
         # wait take pixels from the video.
         if level not in ("error", "sync"):
             self._notice.hide()
+            return
+        # The audit repeats the same notice every 5 s; restyling it each time is wasted work.
+        if (self._notice.isVisible() and self._notice.text() == message
+                and self._notice.property("level") == level):
             return
         self._notice.setText(message)
         self._notice.setProperty("level", level)
@@ -265,6 +278,8 @@ class WallView(QWidget):
         self._audit_timer.timeout.connect(self.audit_now)
         self._playback_timer = QTimer(self)
         self._playback_timer.timeout.connect(self._confirm_playback)
+        self._playback_ticks_left = 0
+        self._reported_playing = -1
 
     def set_immersive(self, enabled: bool) -> None:
         """Trade decorative card gaps for image area while the wall fills its window."""
@@ -328,6 +343,8 @@ class WallView(QWidget):
             tile.view.surface.winId()
         self._pending_starts = list(self._tiles)
         self._start_next()
+        self._playback_ticks_left = PLAYBACK_CONFIRMATION_TICKS
+        self._reported_playing = -1
         self._playback_timer.start(PLAYBACK_CONFIRMATION_INTERVAL_MS)
         # Delay the first health warning until every staggered connection has had time to
         # negotiate. This avoids misleading "offline" reports on slower PCs.
@@ -476,8 +493,8 @@ class WallView(QWidget):
             self._audit_timer.start(AUDIT_INTERVAL_MS)
 
     def _confirm_playback(self) -> None:
-        """Update the unobtrusive live indicator without triggering early error warnings."""
-        confirmed = False
+        """Clear notices as soon as tiles play, without waiting for the first audit."""
+        playing = 0
         still_opening = bool(self._pending_starts)
         for tile in self._tiles:
             if tile.player is None:
@@ -486,12 +503,14 @@ class WallView(QWidget):
             self._log_state_change(tile, state)
             if state == PlaybackState.PLAYING:
                 tile.view.set_playing()
-                confirmed = True
+                playing += 1
             elif state == PlaybackState.OPENING:
                 still_opening = True
-        if confirmed and self._on_health_change is not None:
+        if playing != self._reported_playing:
+            self._reported_playing = playing
             self._on_health_change()
-        if not still_opening:
+        self._playback_ticks_left -= 1
+        if not still_opening or self._playback_ticks_left <= 0:
             self._playback_timer.stop()
 
     def _show_opening(self, tile: _Tile) -> None:

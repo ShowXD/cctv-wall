@@ -79,6 +79,7 @@ class AiEventPanel(QFrame):
         self._on_camera_chosen = on_camera_chosen
         self._on_connection_change = on_connection_change
         self._dots: dict[str, QIcon] = {}
+        self._colours: dict[str, str] = {}   # camera label -> colour, for the site on screen
         self._site: Site | None = None
         # One queue per connection: each feed has its own delay, so a single queue
         # ordered by arrival could hold a short-delay result behind a long-delay one.
@@ -87,7 +88,9 @@ class AiEventPanel(QFrame):
         self._bridge = _FeedBridge(self)
         self._bridge.event_received.connect(self._receive)
         self._bridge.status_changed.connect(self._show_status)
+        # Runs only while results wait for their display time; an idle feed costs no ticks.
         self._release_timer = QTimer(self)
+        self._release_timer.setInterval(RELEASE_INTERVAL_MS)
         self._release_timer.timeout.connect(self._release)
 
         box = QVBoxLayout(self)
@@ -137,7 +140,6 @@ class AiEventPanel(QFrame):
         self._status.setToolTip("\n".join(
             f"{feed.address}  {self._translator.t('ai_delay_tip_ai_time' if feed.align == ALIGN_AI_TIME else 'ai_delay_tip_received', delay=feed.delay_ms)}"
             for feed in feeds))
-        self._release_timer.start(RELEASE_INTERVAL_MS)
 
     def _connect(self, feed: AiFeedConfig) -> None:
         # Tag every callback with its client so results from a feed that was just
@@ -162,6 +164,8 @@ class AiEventPanel(QFrame):
         pending = self._pending.get(client)
         if pending is not None:
             pending.append(event)
+            if not self._release_timer.isActive():
+                self._release_timer.start()
 
     def _show_status(self, client: AiFeedClient, status: str) -> None:
         if client not in self._connected:
@@ -177,20 +181,31 @@ class AiEventPanel(QFrame):
         self._on_connection_change(sum(self._connected.values()), len(self._connected))
 
     def _release(self) -> None:
+        """Oldest first, like a log; the list follows new rows only while it is at the bottom,
+        so scrolling back to read is not yanked away."""
         now = time.time()
+        scroll = self._list.verticalScrollBar()
+        following = scroll.value() >= scroll.maximum()
+        added = False
         for client, pending in self._pending.items():
             for event in release_due(pending, now, client.config):
                 self._add_row(event)
+                added = True
                 line = client.config.tile_row(event.group)
                 if line is not None:   # a kind not ticked for the tiles stays in this list only
                     self._on_event_shown(event.camera_label, tile_text(event),
                                          self._colour(event.camera_label), line)
+        if added:
+            while self._list.count() > MAX_ROWS:
+                self._list.takeItem(0)
+            if following:
+                # Wrapped rows get their height in the next layout pass; scroll after it.
+                QTimer.singleShot(0, self._list.scrollToBottom)
+        if not any(self._pending.values()):
+            self._release_timer.stop()
 
     def _colour(self, camera_label: str) -> str:
-        labels = [camera.label for camera in self._site.cameras] if self._site is not None else []
-        if camera_label not in labels:
-            return UNKNOWN_CAMERA_COLOUR
-        return CAMERA_COLOURS[labels.index(camera_label) % len(CAMERA_COLOURS)]
+        return self._colours.get(camera_label, UNKNOWN_CAMERA_COLOUR)
 
     def _dot_for(self, camera_label: str) -> QIcon:
         colour = self._colour(camera_label)
@@ -199,8 +214,6 @@ class AiEventPanel(QFrame):
         return self._dots[colour]
 
     def _add_row(self, event: AiEvent) -> None:
-        """Oldest first, like a log; the list follows new rows only while it is at the bottom,
-        so scrolling back to read is not yanked away."""
         marker = "⚠ " if event.has_clock_skew else ""
         shown = event.event_time if event.event_time is not None else event.received_at
         item = QListWidgetItem(f"{marker}{short_camera_name(event.camera_label)}  ·  {_clock(shown)}\n"
@@ -214,22 +227,18 @@ class AiEventPanel(QFrame):
         if event.has_clock_skew:
             tip += "\n" + self._translator.t("ai_clock_skew", seconds=event.clock_skew)
         item.setToolTip(tip)
-        scroll = self._list.verticalScrollBar()
-        following = scroll.value() >= scroll.maximum()
         self._list.addItem(item)
         item.setHidden(self._hidden(event.camera_label))
-        while self._list.count() > MAX_ROWS:
-            self._list.takeItem(0)
-        if following:
-            # Wrapped rows get their height in the next layout pass; scroll after it.
-            QTimer.singleShot(0, self._list.scrollToBottom)
 
     def _fill_filter(self) -> None:
+        cameras = self._site.cameras if self._site is not None else ()
+        self._colours = {camera.label: CAMERA_COLOURS[index % len(CAMERA_COLOURS)]
+                         for index, camera in enumerate(cameras)}
         chosen = self._filter.currentData()
         self._filter.blockSignals(True)
         self._filter.clear()
         self._filter.addItem(self._translator.t("ai_all_cameras"), None)
-        for camera in self._site.cameras if self._site is not None else ():
+        for camera in cameras:
             self._filter.addItem(self._dot_for(camera.label), short_camera_name(camera.label),
                                  camera.label)
         self._filter.setCurrentIndex(max(self._filter.findData(chosen), 0))

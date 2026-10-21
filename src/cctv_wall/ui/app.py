@@ -296,10 +296,11 @@ class MainWindow(QMainWindow):
         self._control_bar.show_resources(self._usage, self._wall.allocated_player_count)
 
     def _sample_resources(self) -> None:
-        """Only the 2 s timer samples, so CPU is always averaged over the same interval.
-
-        Sampling on every status refresh as well made the window — and the number — jump.
-        """
+        """Only this timer samples: CPU is a delta between samples, and averaging it over
+        intervals of different lengths makes the number jump. Nobody sees it while the bar is
+        hidden or the window minimised, so the sample is skipped then."""
+        if not self._control_bar.isVisible() or self.isMinimized():
+            return
         self._usage = self._resource_monitor.sample()
         self._control_bar.show_resources(self._usage, self._wall.allocated_player_count)
 

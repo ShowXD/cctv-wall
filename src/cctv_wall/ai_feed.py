@@ -12,6 +12,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Callable, Mapping
 
 DEFAULT_CAMERA_KEY = "camera"
@@ -273,7 +274,8 @@ def parse_line(line: str, config: AiFeedConfig, received_at: float,
     if not source:
         _warn_once(config, warned, f"a line without {config.camera_key!r}")
         return None
-    camera = dict(config.cameras).get(source) if config.cameras else source
+    cameras, labels = _lookup_tables(config)
+    camera = cameras.get(source) if config.cameras else source
     if camera is None:
         _warn_once(config, warned, f"{config.camera_key}={source!r}, which is not in its cameras table")
         return None
@@ -282,12 +284,20 @@ def parse_line(line: str, config: AiFeedConfig, received_at: float,
             return None
     event_time = parse_time(message.get(config.time_key)) if config.time_key else None
     rest = {k: v for k, v in message.items() if k not in (config.camera_key, config.time_key)}
-    rest = _labelled(rest, {field_name: dict(codes) for field_name, codes in config.labels})
+    if labels:
+        rest = _labelled(rest, labels)
     text = "  ".join(f"{k}={_scalar(v)}" for k, v in rest.items())
     found = _field_values(message, config.tile_key) if config.tile_key else []
     # payload 裡可能同時有好幾種；有勾選的種類優先，才會落到它那一行。
     group = next((value for value in config.tile_values if value in found), found[0] if found else "")
     return AiEvent(camera, text, received_at, event_time, group)
+
+
+@lru_cache(maxsize=16)
+def _lookup_tables(config: AiFeedConfig) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """攝影機對照表與代碼文字表。AI 端每秒送好幾行，而 config 不可變，所以每條連線只建一次，
+    不必每行都在接收執行緒上重建（那會佔住 GIL、拖慢畫面）。"""
+    return dict(config.cameras), {field_name: dict(codes) for field_name, codes in config.labels}
 
 
 def _field_values(value: Any, field_name: str) -> list[str]:

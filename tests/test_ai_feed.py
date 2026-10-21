@@ -11,7 +11,7 @@ from datetime import datetime
 import pytest
 
 from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_DELAY_MS, STATUS_CONNECTED, AiEvent, AiFeedClient,
-                               AiFeedConfig, due_at, parse_line, parse_time, release_due)
+                               AiFeedConfig, _lookup_tables, due_at, parse_line, parse_time, release_due)
 from cctv_wall.models import Site, Workspace
 from cctv_wall.ui.ai_feed_editor import FeedForm, config_from_form, feeds_from_forms, label_fields
 from cctv_wall.ui.ai_panel import short_camera_name, wrappable
@@ -317,6 +317,22 @@ class TestTileRows:
             {"name": "A", "ai_feeds": [feed.as_dict()]}, {"name": "B", "ai_feeds": [feed.as_dict()]}]})
         updated = workspace.with_ai_tile_rows("eventType", ("4",))
         assert {f.tile_values for site in updated.sites for f in site.ai_feeds} == {("4",)}
+
+
+class TestLookupTables:
+    def test_lines_reuse_the_tables_built_for_their_connection(self):
+        config = AiFeedConfig.from_raw({"host": "h", "port": 1, "camera_key": "cameraName",
+                                        "cameras": {"A001": "Gate"},
+                                        "labels": {"vdType": {"2": "汽車"}}})
+        first = parse_line('{"cameraName":"A001","payload":[{"vdType":2}]}', config, 0.0)
+        second = parse_line('{"cameraName":"A001","payload":[{"vdType":2}]}', config, 1.0)
+        assert first.camera_label == second.camera_label == "Gate"
+        assert '"vdType":"汽車"' in first.text and first.text == second.text
+        assert _lookup_tables.cache_info().hits >= 1
+
+    def test_without_labels_the_message_is_shown_as_sent(self):
+        event = parse_line('{"camera":"Gate","payload":[{"vdType":2}]}', CONFIG, 0.0)
+        assert event.text == 'payload=[{"vdType":2}]'
 
 
 class TestCameraFilters:
