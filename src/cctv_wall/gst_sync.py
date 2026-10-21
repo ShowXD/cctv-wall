@@ -176,6 +176,12 @@ class GStreamerSyncPlayer:
             return PlaybackState.OPENING
         return PlaybackState.IDLE
 
+    def stats(self) -> None:
+        return None   # the overlay is a libvlc feature; strict sync shows none
+
+    def show_overlay(self, text: str | None) -> None:
+        pass
+
     def release(self) -> None:
         if self._pipeline is not None:
             self._pipeline.set_state(self._gst.State.NULL)

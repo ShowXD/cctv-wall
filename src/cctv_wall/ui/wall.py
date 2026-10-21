@@ -1,6 +1,7 @@
 """Video wall widgets.  The wall owns only visible players; presentation stays local."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from threading import Thread
 from typing import Callable, Sequence
@@ -13,7 +14,7 @@ from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
-from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
+from cctv_wall.player import PlaybackError, PlaybackState, PlaybackStats, Player, PlayerFactory
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
 FIRST_AUDIT_MS = 9000
@@ -23,6 +24,7 @@ PLAYBACK_CONFIRMATION_INTERVAL_MS = 250
 # camera stuck connecting does not keep a 250 ms timer running for the whole session.
 PLAYBACK_CONFIRMATION_TICKS = 120
 AI_FLASH_MS = 1000
+STATS_INTERVAL_MS = 1000
 STATE_EXPLANATION_KEYS = {
     PlaybackState.OPENING: "connection_waiting",
     PlaybackState.ENDED: "no_video",
@@ -36,6 +38,18 @@ DEAD_STATES = frozenset({PlaybackState.ERROR, PlaybackState.ENDED, PlaybackState
 # Backoff counts audits, so it needs no timer of its own: 1, 2, 4, 6 audits of 5 s is a
 # 5, 10, 20, 30 s wait, capped so a broken source is not hammered.
 MAX_RECONNECT_BACKOFF_TICKS = 6
+
+
+def stats_text(translator: Translator, now: PlaybackStats, before: PlaybackStats | None,
+               seconds: float, reconnects: int) -> str:
+    """One line for the status overlay. The frame rate needs two samples, so the first shows
+    a dash rather than a number that is not true yet."""
+    size = f"{now.width}×{now.height}" if now.width and now.height else "—"
+    fps = "—"
+    if before is not None and seconds > 0:
+        fps = f"{max(now.displayed_frames - before.displayed_frames, 0) / seconds:.1f}"
+    return translator.t("tile_stats", size=size, fps=fps, lost=now.lost_frames,
+                        kbps=now.input_kbps, reconnects=reconnects)
 
 
 def _connection_start_interval(factory: PlayerFactory, tiles_per_page: int) -> int:
@@ -219,6 +233,12 @@ class _Tile:
     last_logged_state: PlaybackState | None = None
     backoff_ticks: int = 1        # audits to wait before the next reconnect
     ticks_until_retry: int = 0    # audits left in the current wait
+    reconnects: int = 0
+    # The status overlay's previous sample, and the player it came from: a reconnect starts
+    # the counters over, so a sample from the old player must not be compared with the new.
+    last_stats: PlaybackStats | None = None
+    last_stats_at: float = 0.0
+    stats_player: Player | None = None
 
     def reset_backoff(self) -> None:
         """Once the picture is back, the next outage reconnects at once."""
@@ -279,6 +299,11 @@ class WallView(QWidget):
         self._playback_timer.timeout.connect(self._confirm_playback)
         self._playback_ticks_left = 0
         self._reported_playing = -1
+        # Off unless asked for: it wakes every second and draws on every tile.
+        self._stats_visible = False
+        self._stats_timer = QTimer(self)
+        self._stats_timer.setInterval(STATS_INTERVAL_MS)
+        self._stats_timer.timeout.connect(self._show_stats)
 
     def set_immersive(self, enabled: bool) -> None:
         """Trade decorative card gaps for image area while the wall fills its window."""
@@ -370,6 +395,32 @@ class WallView(QWidget):
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.show()
 
+    def set_stats_visible(self, visible: bool) -> None:
+        """Resolution, frame rate, dropped frames, bitrate and reconnects drawn on each picture."""
+        self._stats_visible = visible
+        if visible:
+            self._stats_timer.start()
+            self._show_stats()
+            return
+        self._stats_timer.stop()
+        for tile in self._tiles:
+            if tile.player is not None:
+                tile.player.show_overlay(None)
+            tile.last_stats = None
+
+    def _show_stats(self) -> None:
+        now = time.monotonic()
+        for tile in self._tiles:
+            player = tile.player
+            stats = player.stats() if player is not None else None
+            if stats is None:
+                continue   # not connected yet, or a backend without statistics
+            if tile.stats_player is not player:
+                tile.stats_player, tile.last_stats = player, None
+            player.show_overlay(stats_text(self._translator, stats, tile.last_stats,
+                                           now - tile.last_stats_at, tile.reconnects))
+            tile.last_stats, tile.last_stats_at = stats, now
+
     def show_ai_event(self, camera_label: str, text: str, colour: str, line: int = 0) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
         for tile in self._tiles:
@@ -411,6 +462,7 @@ class WallView(QWidget):
         if not _due_for_retry(tile):
             return False
         logger().info("camera=%s reconnecting", tile.log_label)
+        tile.reconnects += 1
         self._release(tile)
         self._start(tile)
         return True
@@ -443,6 +495,7 @@ class WallView(QWidget):
             return
         tile.reset_backoff()
         logger().info("camera=%s manual reconnect", tile.log_label)
+        tile.reconnects += 1
         self._release(tile)
         self._start(tile)
 

@@ -39,6 +39,13 @@ def _draw_fill(painter: QPainter) -> None:
         painter.drawLine(x, y, x, y + 9 * dy)
 
 
+def _draw_stats(painter: QPainter) -> None:
+    """Three rising bars: numbers about each stream."""
+    _outline(painter)
+    for x, top in ((7, 20), (16, 12), (25, 5)):
+        painter.drawRect(x, top, 4, 31 - top)
+
+
 class ControlBar(QFrame):
     """Shows state it is given and reports clicks; the main window owns every decision.
 
@@ -51,8 +58,8 @@ class ControlBar(QFrame):
                  on_next_page: Callable[[], None], on_tiles_changed: Callable[[int], None],
                  on_language: Callable[[str], None], on_theme: Callable[[str], None],
                  on_fill: Callable[[], None], on_strict_sync: Callable[[bool], None],
-                 on_ai_panel: Callable[[], None], on_reload: Callable[[], None],
-                 on_logs: Callable[[], None]) -> None:
+                 on_ai_panel: Callable[[], None], on_stats: Callable[[bool], None],
+                 on_reload: Callable[[], None], on_logs: Callable[[], None]) -> None:
         super().__init__()
         self._translator = translator
         self.setObjectName("controlBar")
@@ -93,6 +100,10 @@ class ControlBar(QFrame):
         self._ai_button.setChecked(True)
         self._ai_button.hide()
         box.addWidget(self._ai_button)
+        stats_button = self._icon_button(painted_icon(ICON_SIZE, _draw_stats),
+                                         translator.t("stats_tip"), on_stats)
+        stats_button.setCheckable(True)
+        box.addWidget(stats_button)
         box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_BrowserReload,
                                         translator.t("reload_tip"), on_reload))
         box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_FileDialogDetailedView,

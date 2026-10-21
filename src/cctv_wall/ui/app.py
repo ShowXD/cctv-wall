@@ -167,7 +167,9 @@ class MainWindow(QMainWindow):
             on_next_page=self._next_page, on_tiles_changed=self._on_tiles_changed,
             on_language=self._on_language_selected, on_theme=self._on_theme_selected,
             on_fill=self._toggle_window_maximized, on_strict_sync=self._toggle_strict_sync,
-            on_ai_panel=self._refresh_ai_panel, on_reload=self._show_current_page,
+            on_ai_panel=self._refresh_ai_panel,
+            on_stats=lambda visible: self._wall.set_stats_visible(visible),
+            on_reload=self._show_current_page,
             on_logs=self._show_logs)
         layout_box.addWidget(self._control_bar)
         self._wall = WallView(self._factory, self._workspace.tiles_per_page, self._translator,

@@ -10,6 +10,7 @@ plugin scan, which matters on the weak PCs this app targets.
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
@@ -34,6 +35,17 @@ class PlaybackState(str, Enum):
     ERROR = "error"
 
 
+@dataclass(frozen=True, slots=True)
+class PlaybackStats:
+    """Counters since the stream started; a rate is the difference between two samples."""
+
+    width: int
+    height: int
+    displayed_frames: int
+    lost_frames: int        # decoded but dropped because they were already late
+    input_kbps: int
+
+
 # libvlc state name -> our state. Keyed by name so this module never imports vlc.
 _VLC_STATE_NAMES: dict[str, PlaybackState] = {
     "NothingSpecial": PlaybackState.IDLE,
@@ -53,6 +65,12 @@ class Player(Protocol):
     def play(self, url: str, window_id: int) -> None: ...
 
     def state(self) -> PlaybackState: ...
+
+    def stats(self) -> PlaybackStats | None:
+        """None when the backend cannot report them."""
+
+    def show_overlay(self, text: str | None) -> None:
+        """Draw text on the picture itself, or remove it with None."""
 
     def release(self) -> None: ...
 
@@ -75,10 +93,11 @@ class VlcPlayer:
     def __init__(self, instance) -> None:
         self._instance = instance
         self._player = instance.media_player_new()
+        self._media = None
         self._released = False
 
     def play(self, url: str, window_id: int) -> None:
-        media = self._instance.media_new(url)
+        media = self._media = self._instance.media_new(url)
         for option in media_options_for(url):
             media.add_option(option)
         self._player.set_media(media)
@@ -90,6 +109,42 @@ class VlcPlayer:
     def state(self) -> PlaybackState:
         name = str(self._player.get_state()).rsplit(".", 1)[-1]
         return _VLC_STATE_NAMES.get(name, PlaybackState.IDLE)
+
+    def stats(self) -> PlaybackStats | None:
+        import vlc
+
+        counters = vlc.MediaStats()
+        if self._media is None or not self._media.get_stats(counters):
+            return None
+        width, height = self._video_size()
+        # input_bitrate is in bytes per millisecond.
+        return PlaybackStats(width, height, counters.displayed_pictures, counters.lost_pictures,
+                             round(counters.input_bitrate * 8000))
+
+    def show_overlay(self, text: str | None) -> None:
+        """libvlc's marquee draws inside the video, which a Qt widget cannot: the native video
+        window paints over its siblings."""
+        import vlc
+
+        option = vlc.VideoMarqueeOption
+        if text is None:
+            self._player.video_set_marquee_int(option.Enable, 0)
+            return
+        _width, height = self._video_size()
+        self._player.video_set_marquee_int(option.Enable, 1)
+        self._player.video_set_marquee_int(option.Position, 5)   # top left
+        # The size is in video pixels: about the same share of the tile at any resolution.
+        self._player.video_set_marquee_int(option.Size, max(14, height // 24))
+        self._player.video_set_marquee_int(option.Timeout, 0)
+        self._player.video_set_marquee_string(option.Text, text)
+
+    def _video_size(self) -> tuple[int, int]:
+        import vlc
+
+        try:
+            return self._player.video_get_size(0)
+        except vlc.VLCException:
+            return 0, 0   # no video track yet
 
     def release(self) -> None:
         """Tear down without blocking the Qt event loop on an unhealthy RTSP connection.
@@ -156,12 +211,19 @@ class NullPlayer:
         self.calls: list[tuple[str, int]] = []
         self.released = False
         self.reported_state = state
+        self.overlay: str | None = None
 
     def play(self, url: str, window_id: int) -> None:
         self.calls.append((url, window_id))
 
     def state(self) -> PlaybackState:
         return self.reported_state
+
+    def stats(self) -> PlaybackStats | None:
+        return PlaybackStats(1920, 1080, 15 * len(self.calls), 0, 2048)
+
+    def show_overlay(self, text: str | None) -> None:
+        self.overlay = text
 
     def release(self) -> None:
         self.released = True

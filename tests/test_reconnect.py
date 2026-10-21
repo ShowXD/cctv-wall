@@ -12,10 +12,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # 不需要螢幕也能�
 from PySide6.QtWidgets import QApplication
 
 from cctv_wall.i18n import Translator
-from cctv_wall.player import PlaybackState
+from cctv_wall.player import PlaybackState, PlaybackStats
 from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _AiLine, _Tile,
-                               _due_for_retry, _release_detached)
+                               _due_for_retry, _release_detached, stats_text)
 
 
 def _tile() -> _Tile:
@@ -96,6 +96,20 @@ class TestAiLine:
         assert len(styled) == 1 and line.text() == "12:00:02  c"
         line.show_result("12:00:03  d", "#3fb950")   # 換顏色就要重設
         assert len(styled) == 2
+
+
+class TestStatsText:
+    def test_the_frame_rate_needs_two_samples(self):
+        # 第一次取樣還算不出每秒幀數，顯示「—」而不是一個不正確的數字。
+        t = Translator("en")
+        first = PlaybackStats(1920, 1080, 100, 2, 2048)
+        assert "— fps" in stats_text(t, first, None, 0.0, 0)
+        later = PlaybackStats(1920, 1080, 130, 3, 2048)
+        assert stats_text(t, later, first, 2.0, 1) == (
+            "1920×1080 · 15.0 fps · dropped 3 · 2048 kbps · reconnects 1")
+
+    def test_no_picture_yet_has_no_size(self):
+        assert stats_text(Translator("en"), PlaybackStats(0, 0, 0, 0, 0), None, 0.0, 0).startswith("—")
 
 
 class TestViewMode:
