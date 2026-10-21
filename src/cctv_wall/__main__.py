@@ -114,7 +114,7 @@ def _fail(message: str, status: int) -> int:
 
 
 def _apply_system_theme(application: QApplication, scheme: Qt.ColorScheme | None = None) -> None:
-    """Match the operating-system appearance without changing any playback behaviour."""
+    """Restyle for the effective colour scheme, followed or forced; playback is untouched."""
     chosen = scheme or application.styleHints().colorScheme()
     dark = chosen == Qt.ColorScheme.Dark
     application.setPalette(application_palette(dark))
@@ -150,10 +150,12 @@ def main(argv: list[str] | None = None) -> int:
     _apply_system_theme(application)
     application.styleHints().colorSchemeChanged.connect(
         lambda scheme: _apply_system_theme(application, scheme))
-    # This widget takes over from the native PyInstaller splash.  It is deliberately
-    # created before configuration is read, so slower disks still get visible feedback.
+    # Takes over from the exe's own splash image (see cctv_wall.spec), which is all that can
+    # show while a one-file build unpacks. Created before configuration is read, so slower
+    # disks still get visible feedback.
     startup = StartupProgress()
     startup.show_at_center()
+    _close_bootloader_splash()
     startup.set_progress(20, "正在讀取設定…")
 
     try:
@@ -190,6 +192,15 @@ def main(argv: list[str] | None = None) -> int:
     window.show()
     startup.dismiss()
     return application.exec()
+
+
+def _close_bootloader_splash() -> None:
+    """pyi_splash exists only inside a build made with a splash; anywhere else there is none."""
+    try:
+        import pyi_splash
+    except ImportError:
+        return
+    pyi_splash.close()
 
 
 if __name__ == "__main__":

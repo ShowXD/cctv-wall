@@ -12,12 +12,13 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from typing import Any, Callable, Mapping
 
 DEFAULT_CAMERA_KEY = "camera"
 DEFAULT_TIME_KEY = "ts"
-# 與 low_end 效能檔的 network-caching 相同：影像大約晚這麼久才出現在畫面上。
-# 實際延遲還包含攝影機編碼，所以這是現場校準用的旋鈕，而不是精確值。
+# 影像大約晚這麼久才出現在畫面上：VLC 的 network-caching（1000 ms，見 performance.py）
+# 加上攝影機編碼。這是現場校準用的旋鈕，而不是精確值。
 DEFAULT_DELAY_MS = 1500
 MAX_DELAY_MS = 30_000
 # 異常的 AI 端若一直不送換行，不能讓它無限吃記憶體。
@@ -31,7 +32,7 @@ CLOCK_SKEW_WARNING_SECONDS = 2.0
 _EPOCH_MILLISECONDS_THRESHOLD = 1e11
 
 # 對齊方式：依 AI 時間＝AI 送來的時間＋延遲才顯示，不受 AI 端處理快慢影響（需兩端校時）；
-# 依收到時間＝收到後延遲才顯示。舊設定沒有這個欄位，照舊依收到時間，已校準的延遲不會跑掉。
+# 依收到時間＝收到後延遲才顯示。設定檔沒有這個欄位時依收到時間，已校準的延遲不會位移。
 ALIGN_AI_TIME = "ai_time"
 ALIGN_RECEIVED = "received"
 ALIGN_MODES = (ALIGN_AI_TIME, ALIGN_RECEIVED)
@@ -39,10 +40,9 @@ ALIGN_MODES = (ALIGN_AI_TIME, ALIGN_RECEIVED)
 STATUS_CONNECTED = "connected"
 STATUS_RECONNECTING = "reconnecting"
 
-
-def _log() -> logging.Logger:
-    # event_log 會匯入 Qt；子 logger 會往上傳到它設定好的 "cctv_wall" handler。
-    return logging.getLogger("cctv_wall.ai_feed")
+# event_log 經由 repository → models 匯入本模組，不能反過來匯入它；子 logger 的紀錄
+# 一樣會往上交給 "cctv_wall" 設定好的 handler。
+_LOG = logging.getLogger("cctv_wall.ai_feed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +65,7 @@ class AiFeedConfig:
     # 換專案時改設定就好，不必改程式。
     labels: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
     # 畫格下方依 tile_key 欄位分行：tile_values 裡每個值各留一行最新結果（依此順序）；
-    # 沒有 tile_values 時照舊只留最新一筆。
+    # 沒有 tile_values 時只留一行最新結果。
     tile_key: str = ""
     tile_values: tuple[str, ...] = ()
     align: str = ALIGN_RECEIVED
@@ -104,7 +104,7 @@ class AiFeedConfig:
         return tuple(name for _source, name in self.cameras)
 
     def tile_row(self, group: str) -> int | None:
-        """Which line under the tile a result takes, or None when its kind is not kept there."""
+        """這筆結果在畫格下方的第幾行；這個種類不留在畫格下方時為 None。"""
         if not self.tile_values:
             return 0
         return self.tile_values.index(group) if group in self.tile_values else None
@@ -207,7 +207,7 @@ def _scalar(value: Any) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AiEvent:
-    camera: str
+    camera_label: str                  # 對到的攝影機（Camera.label）
     text: str
     received_at: float                 # 本機 epoch 秒
     event_time: float | None = None    # AI 端 epoch 秒；沒送或看不懂時為 None
@@ -249,7 +249,7 @@ def _warn_once(config: AiFeedConfig, warned: set[str] | None, reason: str) -> No
         if reason in warned:
             return
         warned.add(reason)
-    _log().warning("ai_feed %s: ignored %s (repeats are not logged again)", config.address, reason)
+    _LOG.warning("ai_feed %s: ignored %s (repeats are not logged again)", config.address, reason)
 
 
 def parse_line(line: str, config: AiFeedConfig, received_at: float,
@@ -273,7 +273,8 @@ def parse_line(line: str, config: AiFeedConfig, received_at: float,
     if not source:
         _warn_once(config, warned, f"a line without {config.camera_key!r}")
         return None
-    camera = dict(config.cameras).get(source) if config.cameras else source
+    cameras, labels = _lookup_tables(config)
+    camera = cameras.get(source) if config.cameras else source
     if camera is None:
         _warn_once(config, warned, f"{config.camera_key}={source!r}, which is not in its cameras table")
         return None
@@ -282,12 +283,20 @@ def parse_line(line: str, config: AiFeedConfig, received_at: float,
             return None
     event_time = parse_time(message.get(config.time_key)) if config.time_key else None
     rest = {k: v for k, v in message.items() if k not in (config.camera_key, config.time_key)}
-    rest = _labelled(rest, {field_name: dict(codes) for field_name, codes in config.labels})
+    if labels:
+        rest = _labelled(rest, labels)
     text = "  ".join(f"{k}={_scalar(v)}" for k, v in rest.items())
     found = _field_values(message, config.tile_key) if config.tile_key else []
     # payload 裡可能同時有好幾種；有勾選的種類優先，才會落到它那一行。
     group = next((value for value in config.tile_values if value in found), found[0] if found else "")
     return AiEvent(camera, text, received_at, event_time, group)
+
+
+@lru_cache(maxsize=16)
+def _lookup_tables(config: AiFeedConfig) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """攝影機對照表與代碼文字表。AI 端每秒送好幾行，而 config 不可變，所以每條連線只建一次，
+    不必每行都在接收執行緒上重建（那會佔住 GIL、拖慢畫面）。"""
+    return dict(config.cameras), {field_name: dict(codes) for field_name, codes in config.labels}
 
 
 def _field_values(value: Any, field_name: str) -> list[str]:
@@ -323,8 +332,11 @@ def due_at(event: AiEvent, config: AiFeedConfig) -> float:
 
 
 def release_due(pending: deque[AiEvent], now: float, config: AiFeedConfig) -> list[AiEvent]:
-    """取出已到顯示時刻的事件，讓文字與晚到的畫面同時出現。pending 依接收時間排序；
-    同一條連線的 AI 時間也是遞增的，所以只看隊首即可。"""
+    """取出已到顯示時刻的事件，讓文字與晚到的畫面同時出現。
+
+    只看隊首：pending 依接收順序排列，同一條連線的顯示時刻大致遞增。依 AI 時間對齊時，
+    時間錯亂而退回收到時間的那一筆會讓後面幾筆最多晚到它的時刻才顯示；換來的是每次
+    計時都不必掃描整個佇列。"""
     due = []
     while pending and due_at(pending[0], config) <= now:
         due.append(pending.popleft())
@@ -368,14 +380,14 @@ class AiFeedClient:
             try:
                 sock = self._connect((self.config.host, self.config.port), CONNECT_TIMEOUT_SECONDS)
             except OSError as error:
-                _log().info("ai_feed %s: connect failed: %s", self.config.address, error)
+                _LOG.info("ai_feed %s: connect failed: %s", self.config.address, error)
             else:
                 with self._lock:
                     if self._stopping.is_set():
                         _close(sock)
                         return
                     self._socket = sock
-                _log().info("ai_feed %s: connected", self.config.address)
+                _LOG.info("ai_feed %s: connected", self.config.address)
                 self._on_status(STATUS_CONNECTED)
                 backoff = FIRST_BACKOFF_SECONDS
                 self._read(sock)
@@ -383,7 +395,7 @@ class AiFeedClient:
                     self._socket = None
                 _close(sock)
                 if not self._stopping.is_set():
-                    _log().info("ai_feed %s: disconnected", self.config.address)
+                    _LOG.info("ai_feed %s: disconnected", self.config.address)
             if self._stopping.wait(backoff):
                 return
             backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
@@ -399,7 +411,7 @@ class AiFeedClient:
                     if not raw:
                         return
                     if len(raw) > MAX_LINE_BYTES and not raw.endswith(b"\n"):
-                        _log().warning("ai_feed %s: line over %d bytes, reconnecting",
+                        _LOG.warning("ai_feed %s: line over %d bytes, reconnecting",
                                        self.config.address, MAX_LINE_BYTES)
                         return
                     line = raw.decode("utf-8", errors="replace").strip()
@@ -409,7 +421,7 @@ class AiFeedClient:
                             self._on_event(event)
         except OSError as error:
             if not self._stopping.is_set():
-                _log().info("ai_feed %s: read failed: %s", self.config.address, error)
+                _LOG.info("ai_feed %s: read failed: %s", self.config.address, error)
 
 
 def _close(sock: socket.socket) -> None:

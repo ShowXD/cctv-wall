@@ -210,7 +210,11 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
   所以設定檔絕不能用 `__file__` 定位（`repository.default_config_path()` 有對應處理與測試）。
 - 打包後的 `--check` 若是被雙擊執行（沒有 console），報告會用對話框顯示；
   從命令列執行則印到 stdout。
-- 單檔版每次啟動會先解壓程式元件，完成後顯示單一分段進度條。這是可攜性與啟動時間的取捨。
+- 單檔版每次啟動會先解壓程式元件（約 211 MB），這段時間 Python 還沒開始執行。所以 spec 用
+  PyInstaller 的 `Splash` 讓 bootloader 一雙擊就顯示 `assets/startup_splash.png`（下方寫「正在載入…」），
+  解壓完由程式內的進度小畫面接手並關掉它（`__main__._close_bootloader_splash`）。
+  啟動圖需要 Tcl/Tk，exe 因此多出幾 MB；總啟動時間不變，只是馬上有回應。
+  換圖時保持約 480×270，bootloader 會照原尺寸顯示。
 
 ---
 
@@ -234,7 +238,7 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
 ### 換機器 / 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **212 passed**。
+2. `uv run --group dev pytest -q` → 應為 **220 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

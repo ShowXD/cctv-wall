@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineE
 
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Camera, Workspace, _without_credentials
+from cctv_wall.models import Camera, Workspace, split_credentials
 
 CAMERA_FIELDS = ("name", "url", "user", "password")
 FIELD_LABEL_KEYS = {"name": "name", "url": "direct_url", "user": "username", "password": "password"}
@@ -59,7 +59,7 @@ class CameraForm(QWidget):
     def _move_credentials(self) -> None:
         """Show a pasted rtsp://user:pass@host/... split at once. Credentials just pasted are the
         ones meant, so they replace the fields (saving alone would keep the fields' old values)."""
-        url, user, password = _without_credentials(self._fields["url"].text().strip())
+        url, user, password = split_credentials(self._fields["url"].text().strip())
         if not user and not password:
             return
         self._fields["url"].setText(url)

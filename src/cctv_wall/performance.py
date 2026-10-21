@@ -7,7 +7,8 @@ Why these options help on slow machines:
     --avcodec-hw=any          let the GPU decode H.264/H.265 instead of the CPU
     --no-audio                CCTV monitoring is silent by design; never decode audio
     :avcodec-skiploopfilter   skip deblocking on non-reference frames — a large CPU saving
-    --no-osd / --no-stats     no overlay rendering, no bookkeeping
+    --no-osd                  no on-screen-display rendering
+Statistics stay on: they are a few counters per frame, and the status overlay reads them.
     --drop-late-frames        stay live instead of queueing frames that are already late
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ RTSP_PREFIX = "rtsp://"
 INSTANCE_ARGS = (
     "--no-video-title-show", "--no-snapshot-preview", "--no-sub-autodetect-file",
     "--no-mouse-events", "--no-keyboard-events", "--no-fullscreen", "--quiet",
-    "--no-audio", "--avcodec-hw=any", "--no-osd", "--no-stats",
+    "--no-audio", "--avcodec-hw=any", "--no-osd",
     "--network-caching=1000", "--live-caching=1000", "--drop-late-frames",
 )
 STREAM_OPTIONS = (":avcodec-skiploopfilter=nonref", ":clock-jitter=0")

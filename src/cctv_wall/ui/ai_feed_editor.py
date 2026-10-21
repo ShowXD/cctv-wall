@@ -1,11 +1,12 @@
-"""Dialog for a site's AI result connections: address, camera mapping, message format."""
+"""Dialog for a site's AI connections: address, delay and alignment, camera mapping with
+per-camera filters, the result lines under each tile, and the message format."""
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
                                QGroupBox, QHBoxLayout, QHeaderView, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
@@ -18,6 +19,7 @@ from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_CAMERA_KEY
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site
+from cctv_wall.ui.ai_panel import short_camera_name
 
 # Message-format settings change per project, not per site visit, so they stay as
 # JSON text instead of a widget for every option.
@@ -35,7 +37,7 @@ class FeedForm:
     advanced: str = ""
     tile_key: str = ""
     tile_values: list[str] = field(default_factory=list)
-    align: str = ALIGN_AI_TIME   # a connection set up from now on aligns to the AI's own time
+    align: str = ALIGN_AI_TIME   # new connections; a stored one without "align" keeps "received"
     filters: dict[str, tuple[str, list[str]]] = field(default_factory=dict)  # AI id -> (field, codes)
 
     @classmethod
@@ -117,6 +119,9 @@ def feeds_from_forms(site_name: str, cameras: Iterable[Camera],
     return tuple(feeds)
 
 
+CHECK_ROOM = 44   # check box, its gap and the item padding, in pixels
+
+
 class _CodePicker(QWidget):
     """A field and the codes ticked under it, both offered from the message format's labels."""
 
@@ -148,6 +153,7 @@ class _CodePicker(QWidget):
             self._values.setWrapping(True)
             self._values.setResizeMode(QListWidget.ResizeMode.Adjust)
             self._values.setSpacing(4)
+            self._values.setTextElideMode(Qt.TextElideMode.ElideNone)
             self._values.setMaximumHeight(100)   # two or three wrapped rows of kinds
         box.addWidget(self._values)
 
@@ -169,8 +175,15 @@ class _CodePicker(QWidget):
     def _show_values(self, checked: Sequence[str]) -> None:
         self._values.clear()
         for code, text in self._fields.get(self.key(), []):
-            item = QListWidgetItem(f"{text}  ({code})")
+            label = f"{text}  ({code})"
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, code)
+            if self._values.isWrapping():
+                # Side by side, the view sizes an item by its text alone and leaves out the
+                # style sheet's check box, so the text would be cut short.
+                metrics = self._values.fontMetrics()
+                item.setSizeHint(QSize(metrics.horizontalAdvance(label) + CHECK_ROOM,
+                                       metrics.height() + 10))
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if code in checked else Qt.CheckState.Unchecked)
             self._values.addItem(item)
@@ -186,18 +199,25 @@ class _CodePicker(QWidget):
                 if self._values.item(row).checkState() == Qt.CheckState.Checked]
 
 
-def _show_filter(button: QPushButton, fields: dict[str, list[tuple[str, str]]],
-                 translator: Translator) -> None:
-    """The button carries its camera's (field, codes) as .rule; its text names the kept kinds."""
-    if not button.rule:
-        button.setText(translator.t("ai_filter_all"))
-        button.setToolTip("")
-        return
-    field_name, values = button.rule
-    names = dict(fields.get(field_name, []))
-    shown = translator.t("list_separator").join(names.get(code, code) for code in values)
-    button.setText(shown)
-    button.setToolTip(translator.t("ai_filter_summary", field=field_name, values=shown))
+class _FilterButton(QPushButton):
+    """One mapping row's camera filter, (field, codes) or None, shown as the kinds it keeps."""
+
+    def __init__(self, translator: Translator) -> None:
+        super().__init__()
+        self._translator = translator
+        self.rule: tuple[str, list[str]] | None = None
+
+    def show_rule(self, fields: dict[str, list[tuple[str, str]]]) -> None:
+        """Codes read as their label text; the format's labels may have changed since."""
+        if not self.rule:
+            self.setText(self._translator.t("ai_filter_all"))
+            self.setToolTip("")
+            return
+        field_name, values = self.rule
+        names = dict(fields.get(field_name, []))
+        shown = self._translator.t("list_separator").join(names.get(code, code) for code in values)
+        self.setText(shown)
+        self.setToolTip(self._translator.t("ai_filter_summary", field=field_name, values=shown))
 
 
 class AiFeedsDialog(QDialog):
@@ -300,7 +320,7 @@ class AiFeedsDialog(QDialog):
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self._table.verticalHeader().hide()
         self._table.setMinimumHeight(140)   # header + four mappings without scrolling
         mapping_box.addWidget(self._table)
@@ -338,7 +358,7 @@ class AiFeedsDialog(QDialog):
         box.addLayout(top)
         box.addWidget(tiles)
         box.addWidget(advanced, 1)
-        self._fields: dict[str, list[tuple[str, str]]] = {}
+        self._label_fields: dict[str, list[tuple[str, str]]] = {}
         return panel
 
     def _refresh_tile_keys(self) -> None:
@@ -346,12 +366,12 @@ class AiFeedsDialog(QDialog):
         fields = label_fields(self._advanced.toPlainText())
         if fields is None:
             return   # mid-edit, not valid JSON yet: keep what is offered
-        self._fields = fields
+        self._label_fields = fields
         self._tile_rows.set_fields(fields)
         for row in range(self._table.rowCount()):
-            _show_filter(self._table.cellWidget(row, 2), fields, self._translator)
+            self._table.cellWidget(row, 2).show_rule(fields)
 
-    def _edit_filter(self, button: QPushButton) -> None:
+    def _edit_filter(self, button: _FilterButton) -> None:
         row = next(row for row in range(self._table.rowCount())
                    if self._table.cellWidget(row, 2) is button)
         camera = self._table.cellWidget(row, 1).currentText() or self._table.item(row, 0).text()
@@ -360,7 +380,7 @@ class AiFeedsDialog(QDialog):
         box = QVBoxLayout(dialog)
         picker = _CodePicker(self._translator, self._translator.t("ai_filter_all"),
                              self._translator.t("ai_filter_help"))
-        picker.set_fields(self._fields)
+        picker.set_fields(self._label_fields)
         picker.set_choice(*(button.rule or ("", [])))
         box.addWidget(picker)
         buttons = QDialogButtonBox()
@@ -374,7 +394,7 @@ class AiFeedsDialog(QDialog):
             return
         # Nothing ticked keeps every result: a filter that lets nothing through is never wanted.
         button.rule = (picker.key(), picker.values()) if picker.key() and picker.values() else None
-        _show_filter(button, self._fields, self._translator)
+        button.show_rule(self._label_fields)
 
     def _feed_label(self, host: str, port: str) -> str:
         return f"{host}:{port}" if host else self._translator.t("ai_new_feed")
@@ -417,7 +437,7 @@ class AiFeedsDialog(QDialog):
         for row in range(self._table.rowCount()):
             combo = self._table.cellWidget(row, 1)
             source = self._table.item(row, 0).text()
-            rows.append((source, combo.currentText() if isinstance(combo, QComboBox) else ""))
+            rows.append((source, (combo.currentData() or "") if isinstance(combo, QComboBox) else ""))
             if self._table.cellWidget(row, 2).rule:
                 filters[source.strip()] = self._table.cellWidget(row, 2).rule
         tile_key = self._tile_rows.key()
@@ -437,15 +457,17 @@ class AiFeedsDialog(QDialog):
         self._table.insertRow(row)
         self._table.setItem(row, 0, QTableWidgetItem(source))
         combo = QComboBox()
-        names = list(self._camera_names)
-        if camera and camera not in names:
-            names.append(camera)   # keep a mapping to a renamed camera visible, not dropped
-        combo.addItems(names)
-        combo.setCurrentIndex(names.index(camera) if camera else -1)
+        labels = list(self._camera_names)
+        if camera and camera not in labels:
+            labels.append(camera)   # keep a mapping to a renamed camera visible, not dropped
+        # An unnamed camera's label is its whole URL; the host is what fits and tells them apart.
+        for label in labels:
+            combo.addItem(short_camera_name(label), label)
+            combo.setItemData(combo.count() - 1, label, Qt.ItemDataRole.ToolTipRole)
+        combo.setCurrentIndex(labels.index(camera) if camera else -1)
         self._table.setCellWidget(row, 1, combo)
-        button = QPushButton()
-        button.rule = None
-        _show_filter(button, self._fields, self._translator)
+        button = _FilterButton(self._translator)
+        button.show_rule(self._label_fields)
         button.clicked.connect(lambda _checked=False, b=button: self._edit_filter(b))
         self._table.setCellWidget(row, 2, button)
 

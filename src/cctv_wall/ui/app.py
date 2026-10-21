@@ -7,21 +7,19 @@ from dataclasses import replace
 from threading import Timer
 from typing import Callable
 
-from PySide6.QtCore import QSize, QTimer, Qt
-from PySide6.QtGui import (QActionGroup, QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap,
-                           QShortcut)
-from PySide6.QtWidgets import (QComboBox, QSpinBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
-                               QMenu, QMessageBox, QSplitter, QToolButton, QVBoxLayout,
-                               QStyle, QWidget)
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QSplitter, QVBoxLayout, QWidget
 
 from cctv_wall import layout
 from cctv_wall.event_log import logger
-from cctv_wall.i18n import LANGUAGE_LABELS, Translator
-from cctv_wall.models import TILES_LIMIT, Camera, Site, Workspace
+from cctv_wall.i18n import Translator
+from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.player import PlaybackError, PlayerFactory
 from cctv_wall.resources import ProcessUsage, ResourceMonitor
 from cctv_wall.ui import site_commands
 from cctv_wall.ui.ai_panel import AiEventPanel
+from cctv_wall.ui.control_bar import ControlBar
 from cctv_wall.ui.editor import open_editor
 from cctv_wall.ui.frameless import FramelessGrips
 from cctv_wall.ui.logs import show_log_dialog
@@ -34,7 +32,7 @@ from cctv_wall.urls import direct_url_with_stream
 FactoryBuilder = Callable[[bool], PlayerFactory]
 WorkspaceSaver = Callable[[Workspace], None]
 NATIVE_SHUTDOWN_DEADLINE_SECONDS = 3.0
-ICON_COLOUR = QColor("#7f93ab")
+RESOURCE_SAMPLE_MS = 2000
 
 
 def wall_needs_reload(before: Workspace, after: Workspace, site_on_screen: str) -> bool:
@@ -47,6 +45,8 @@ def wall_needs_reload(before: Workspace, after: Workspace, site_on_screen: str) 
     if active is None or active.name != site_on_screen:
         return True
     return before.site(site_on_screen) != active
+
+
 # Navigation action -> the command that carries it out. Adding one means adding a row.
 SITE_COMMANDS = {
     "duplicate": site_commands.duplicate_site,
@@ -59,34 +59,6 @@ CAMERA_COMMANDS = {
     "edit_camera": site_commands.edit_camera_at,
     "delete_camera": site_commands.delete_camera_at,
 }
-
-
-def _painted_icon(draw: Callable[[QPainter], None]) -> QIcon:
-    """A grey that reads on both themes; Qt's standard title-bar icons are white, and the ◐
-    character renders tiny in Segoe UI."""
-    pixmap = QPixmap(36, 36)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(ICON_COLOUR, 3))
-    painter.setBrush(ICON_COLOUR)
-    draw(painter)
-    painter.end()
-    return QIcon(pixmap)
-
-
-def _draw_theme(painter: QPainter) -> None:
-    """A half-filled circle."""
-    painter.drawPie(4, 4, 28, 28, 90 * 16, 180 * 16)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawEllipse(4, 4, 28, 28)
-
-
-def _draw_fill(painter: QPainter) -> None:
-    """Four corners pointing outwards: video takes the whole window."""
-    for x, y, dx, dy in ((5, 5, 1, 1), (31, 5, -1, 1), (5, 31, 1, -1), (31, 31, -1, -1)):
-        painter.drawLine(x, y, x + 9 * dx, y)
-        painter.drawLine(x, y, x, y + 9 * dy)
 
 
 class MainWindow(QMainWindow):
@@ -105,8 +77,8 @@ class MainWindow(QMainWindow):
         self._factory_builder = build_factory
         self._factory = self._create_factory(workspace.strict_sync)
         self._focused_camera: Camera | None = None
-        # Ctrl+clicked cameras of the site on screen; empty = all of them.
-        self._picked_cameras: tuple[Camera, ...] = ()
+        # Ctrl+clicked (site name, camera) pairs, from any sites; empty = the site on screen.
+        self._picked_cameras: tuple[tuple[str, Camera], ...] = ()
         self._page_before_focus = 0
         self._is_shutdown = False
         self._view = ViewMode()
@@ -121,7 +93,7 @@ class MainWindow(QMainWindow):
         self._reload_sites()
         self._resource_timer = QTimer(self)
         self._resource_timer.timeout.connect(self._sample_resources)
-        self._resource_timer.start(2000)
+        self._resource_timer.start(RESOURCE_SAMPLE_MS)
         self._sample_resources()
         QShortcut(QKeySequence("F11"), self, activated=self._toggle_wall_fullscreen)
         QShortcut(QKeySequence("Escape"), self, activated=self._exit_immersive_mode)
@@ -167,10 +139,12 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._navigation)
         self._ai_panel = AiEventPanel(
             self._translator,
-            on_event_shown=lambda camera_name, text, colour, line: self._wall.show_ai_event(
-                camera_name, text, colour, line),
-            on_camera_chosen=lambda camera: self._on_camera_selected(self._active_site_name, camera),
-            on_connection_change=self._show_ai_connection)
+            # The wall and the bar are built after the panel, so these look them up when called.
+            on_event_shown=lambda camera, text, colour, line: self._wall.show_ai_event(
+                camera, text, colour, line),
+            on_camera_chosen=self._on_camera_selected,
+            on_connection_change=lambda connected, total: self._control_bar.show_ai_connection(
+                connected, total))
         splitter.addWidget(self._monitor_panel())
         splitter.addWidget(self._ai_panel)
         splitter.setSizes([self._workspace.sidebar_width, 1180, 300])
@@ -187,12 +161,20 @@ class MainWindow(QMainWindow):
         layout_box = QVBoxLayout(panel)
         layout_box.setContentsMargins(0, 0, 0, 0)
         layout_box.setSpacing(0)
-        self._control_bar_widget = self._control_bar()
-        layout_box.addWidget(self._control_bar_widget)
-        self._wall = WallView(self._factory, self._workspace.tiles_per_page,
-                              on_solo=self._toggle_camera_focus,
+        self._control_bar = ControlBar(
+            self._translator, self._workspace, self,
+            on_toggle_sidebar=self._toggle_sidebar, on_previous_page=self._previous_page,
+            on_next_page=self._next_page, on_tiles_changed=self._on_tiles_changed,
+            on_language=self._on_language_selected, on_theme=self._on_theme_selected,
+            on_fill=self._toggle_window_maximized, on_strict_sync=self._toggle_strict_sync,
+            on_ai_panel=self._refresh_ai_panel,
+            on_stats=lambda visible: self._wall.set_stats_visible(visible),
+            on_reload=self._show_current_page,
+            on_logs=self._show_logs)
+        layout_box.addWidget(self._control_bar)
+        self._wall = WallView(self._factory, self._workspace.tiles_per_page, self._translator,
+                              on_focus=self._toggle_camera_focus,
                               on_health_change=self._refresh_status,
-                              translator=self._translator,
                               on_stream_change=self._change_camera_stream)
         layout_box.addWidget(self._wall, 1)
         return panel
@@ -221,8 +203,7 @@ class MainWindow(QMainWindow):
         """Fill the existing client area with video without changing the window state."""
         self._view = self._view.toggle_filled()
         self._apply_view_mode()
-        self._maximize_button.setToolTip(self._translator.t(
-            "maximize" if self._view.chrome_visible else "restore_window"))
+        self._control_bar.set_filled(self._view.filled)
 
     def _exit_immersive_mode(self) -> None:
         if self._view.fullscreen:
@@ -240,7 +221,7 @@ class MainWindow(QMainWindow):
         if visible and not self._view.fullscreen:
             self._set_wall_frameless(False)
         self._navigation.setVisible(visible and self._workspace.sidebar_visible)
-        self._control_bar_widget.setVisible(visible)
+        self._control_bar.setVisible(visible)
         self._refresh_ai_panel()
         self._wall.set_immersive(not visible)
         if not visible and not self._view.fullscreen:
@@ -252,7 +233,7 @@ class MainWindow(QMainWindow):
         if bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint) == frameless:
             return
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, frameless)
-        self.show()
+        self.show()   # changing window flags hides the window
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -284,127 +265,6 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._grips.relayout()
 
-    def _control_bar(self) -> QWidget:
-        bar = QFrame()
-        bar.setObjectName("controlBar")
-        layout_box = QHBoxLayout(bar)
-        layout_box.setContentsMargins(12, 8, 12, 8)
-        layout_box.setSpacing(8)
-        layout_box.addWidget(self._button("☰", self._translator.t("toggle_sidebar"),
-                                          self._toggle_sidebar, "compactAction"))
-        # Everything the operator reads lives in this one bar: where, how many are live,
-        # and what it costs the PC. A separate header and status bar only took video space.
-        self._site_title = QLabel()
-        self._site_title.setObjectName("siteTitle")
-        layout_box.addWidget(self._site_title)
-        self._live_badge = QLabel()
-        self._live_badge.setObjectName("liveBadge")
-        layout_box.addWidget(self._live_badge)
-        self._resource_status = QLabel()
-        self._resource_status.setObjectName("resourceStatus")
-        layout_box.addWidget(self._resource_status)
-        layout_box.addStretch(1)
-        layout_box.addWidget(self._button("‹", self._translator.t("previous"), self._previous_page, "pageControl"))
-        self._page_label = QLabel()
-        self._page_label.setObjectName("pageLabel")
-        self._page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout_box.addWidget(self._page_label)
-        layout_box.addWidget(self._button("›", self._translator.t("next"), self._next_page, "pageControl"))
-        self._tiles_box = QSpinBox()
-        self._tiles_box.setObjectName("tilesBox")
-        self._tiles_box.setToolTip(self._translator.t("tiles_per_page"))
-        # A number is all this needs: typing, the wheel and the arrow keys all change it,
-        # so the spin buttons and the unit only cost toolbar width.
-        self._tiles_box.setPrefix("▦ ")
-        self._tiles_box.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
-        self._tiles_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._tiles_box.setFixedWidth(64)
-        self._tiles_box.setRange(1, TILES_LIMIT)
-        self._tiles_box.setValue(self._workspace.tiles_per_page)
-        # Typing "12" must not first reconnect a 1-tile page: apply on Enter, focus-out or arrows.
-        self._tiles_box.setKeyboardTracking(False)
-        self._tiles_box.valueChanged.connect(self._on_tiles_changed)
-        layout_box.addWidget(self._tiles_box)
-        self._language_box = QComboBox()
-        self._language_box.setObjectName("languageBox")
-        self._language_box.setToolTip(self._translator.t("language"))
-        self._language_box.setMinimumWidth(100)
-        for language, label in LANGUAGE_LABELS.items():
-            self._language_box.addItem(label, language)
-        self._language_box.setCurrentIndex(self._language_box.findData(self._translator.language))
-        self._language_box.currentIndexChanged.connect(self._on_language_selected)
-        layout_box.addWidget(self._language_box)
-        layout_box.addWidget(self._theme_button())
-        self._maximize_button = self._icon_button(_painted_icon(_draw_fill),
-                                                  self._translator.t("maximize"),
-                                                  self._toggle_window_maximized)
-        layout_box.addWidget(self._maximize_button)
-        self._sync_button = self._button(self._translator.t("sync_short"),
-                                         self._translator.t("enable_strict_sync"),
-                                         self._toggle_strict_sync, "syncAction")
-        self._sync_button.setCheckable(True)
-        self._sync_button.setChecked(self._workspace.strict_sync)
-        self._refresh_sync_button()
-        layout_box.addWidget(self._sync_button)
-        self._ai_button = self._button(f"● {self._translator.t('ai_short')}",
-                                       self._translator.t("ai_events"), self._refresh_ai_panel)
-        self._ai_button.setCheckable(True)
-        self._ai_button.setChecked(True)
-        self._ai_button.hide()
-        layout_box.addWidget(self._ai_button)
-        layout_box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_BrowserReload,
-                                               self._translator.t("reload_tip"),
-                                               self._show_current_page))
-        layout_box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_FileDialogDetailedView,
-                                               self._translator.t("logs"), self._show_logs))
-        return bar
-
-    @staticmethod
-    def _button(text: str, tooltip: str, action: Callable[[], None],
-                object_name: str = "") -> QToolButton:
-        button = QToolButton()
-        button.setText(text)
-        button.setToolTip(tooltip)
-        button.setObjectName(object_name)
-        button.clicked.connect(action)
-        return button
-
-    def _theme_button(self) -> QToolButton:
-        """Follow Windows, or force dark or light; only colours change, so no camera reconnects."""
-        button = QToolButton()
-        button.setObjectName("compactAction")
-        button.setIcon(_painted_icon(_draw_theme))
-        button.setIconSize(QSize(18, 18))
-        button.setToolTip(self._translator.t("appearance"))
-        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        # Parented to the window, not the bar: libvlc makes the bar a native child, and a popup
-        # with a native child as its transient parent triggers a Qt warning.
-        menu = QMenu(self)
-        button.destroyed.connect(menu.deleteLater)   # a language change rebuilds the bar
-        group = QActionGroup(menu)
-        for theme, label in (("system", self._translator.t("theme_system")),
-                             ("dark", self._translator.t("theme_dark")),
-                             ("light", self._translator.t("theme_light"))):
-            action = menu.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(theme == self._workspace.theme)
-            action.triggered.connect(lambda _checked=False, chosen=theme: self._on_theme_selected(chosen))
-            group.addAction(action)
-        button.setMenu(menu)
-        return button
-
-    @staticmethod
-    def _icon_button(icon: QIcon | QStyle.StandardPixmap, tooltip: str,
-                     action: Callable[..., None]) -> QToolButton:
-        """Use Qt's monochrome icons instead of emoji, whose Windows metrics vary by font."""
-        button = QToolButton()
-        button.setObjectName("compactAction")
-        button.setIcon(icon if isinstance(icon, QIcon) else button.style().standardIcon(icon))
-        button.setIconSize(QSize(18, 18))
-        button.setToolTip(tooltip)
-        button.clicked.connect(action)
-        return button
-
     def _reload_sites(self) -> None:
         self._exit_camera_focus_if_needed()
         self._picked_cameras = ()
@@ -418,62 +278,33 @@ class MainWindow(QMainWindow):
         cameras = self._displayed_cameras
         self._page = layout.clamp_page(self._page, len(cameras), self._wall.tiles_per_page)
         self._wall.show_page(cameras, self._page)
-        self._ai_panel.watch(self._site)
+        self._ai_panel.watch(self._watched_sites)
         self._refresh_ai_panel()
         self._refresh_status()
 
     def _refresh_ai_panel(self) -> None:
         """The panel and its toggle exist only for a site with an AI feed configured."""
         has_feed = self._ai_panel.has_feed
-        self._ai_button.setVisible(has_feed)
+        self._control_bar.set_ai_available(has_feed)
         self._ai_panel.setVisible(has_feed and self._view.chrome_visible
-                                  and self._ai_button.isChecked())
-
-    def _show_ai_connection(self, connected: int, total: int) -> None:
-        """The AI button's dot is green only when every connection of the site is up."""
-        state = "connected" if total and connected == total else "partial" if connected else "down"
-        self._ai_button.setProperty("feed", state)
-        self._ai_button.style().unpolish(self._ai_button)
-        self._ai_button.style().polish(self._ai_button)
-        self._ai_button.setToolTip(self._translator.t("ai_connections_tip", connected=connected,
-                                                      total=total))
+                                  and self._control_bar.ai_panel_wanted)
 
     def _refresh_status(self) -> None:
         total = len(self._displayed_cameras)
-        pages = self._wall.page_count(total)
         visible = min(self._wall.tiles_per_page,
                       max(total - self._page * self._wall.tiles_per_page, 0))
-        self._site_title.setText(self._active_site_name or self._translator.t("no_site"))
-        self._live_badge.setText(self._translator.t("live", live=self._wall.playing_count, total=visible))
-        self._page_label.setText(self._translator.t("page", current=self._page + 1, total=pages))
-        self._show_resources()
+        self._control_bar.show_status(self._wall_title, self._wall.playing_count, visible,
+                                      self._page, self._wall.page_count(total))
+        self._control_bar.show_resources(self._usage, self._wall.allocated_player_count)
 
     def _sample_resources(self) -> None:
-        """Only the 2 s timer samples, so CPU is always averaged over the same interval.
-
-        Sampling on every status refresh as well made the window — and the number — jump.
-        """
+        """Only this timer samples: CPU is a delta between samples, and averaging it over
+        intervals of different lengths makes the number jump. Nobody sees it while the bar is
+        hidden or the window minimised, so the sample is skipped then."""
+        if not self._control_bar.isVisible() or self.isMinimized():
+            return
         self._usage = self._resource_monitor.sample()
-        self._show_resources()
-
-    def _show_resources(self) -> None:
-        """The bar says how much of the whole PC the wall uses; the detail waits in the tooltip."""
-        usage = self._usage
-        unknown = self._translator.t("usage_unknown")
-        cpu = unknown
-        if usage is not None and usage.cpu_percent is not None:
-            share = usage.machine_percent if usage.machine_percent is not None else usage.cpu_percent
-            cpu = f"{share:.0f}%"
-        memory = (f"{usage.memory_mebibytes:.0f} MB"
-                  if usage is not None and usage.memory_mebibytes is not None else unknown)
-        self._resource_status.setText(self._translator.t("usage", cpu=cpu, memory=memory))
-        players = self._wall.allocated_player_count
-        if usage is not None and usage.cores_used is not None:
-            tip = self._translator.t("usage_tip", players=players, cores=usage.cores_used,
-                                     total=usage.core_count)
-        else:
-            tip = self._translator.t("players_tip", players=players)
-        self._resource_status.setToolTip(tip)
+        self._control_bar.show_resources(self._usage, self._wall.allocated_player_count)
 
     def _on_site_selected(self, site_name: str) -> None:
         """Choosing the site on screen again (e.g. arrowing back onto its row) restores the grid."""
@@ -484,11 +315,9 @@ class MainWindow(QMainWindow):
             self._clear_picked_cameras()   # the site row again: back to all of its cameras
             return
         self._picked_cameras = ()
-        self._active_site_name = site_name
-        self._workspace = self._workspace.with_last_site(site_name)
+        self._remember_site(site_name)
         self._page = 0
         self._show_current_page()
-        self._persist()
 
     def _on_camera_selected(self, site_name: str, camera: Camera) -> None:
         """Jump to one camera: switch site, turn to its page, then enlarge it.
@@ -510,22 +339,45 @@ class MainWindow(QMainWindow):
             self._show_current_page()
         self._toggle_camera_focus(camera)
 
-    def _on_cameras_picked(self, site_name: str, indices: tuple[int, ...]) -> None:
-        """Ctrl+clicked cameras: two or more fill the wall on their own, one is enlarged, none
-        puts the whole site back. Nothing is saved; another site or Esc ends it."""
+    def _on_cameras_picked(self, picks: tuple[tuple[str, int], ...]) -> None:
+        """Ctrl+clicked cameras, from any sites: two or more fill the wall on their own, one is
+        enlarged, none puts the site on screen back. Nothing is saved; a site row, a plain
+        click or Esc ends it."""
         self._exit_camera_focus_if_needed()
-        if site_name != self._active_site_name:
-            self._on_site_selected(site_name)
-        site = self._workspace.site(site_name)
-        cameras = tuple(site.cameras[i] for i in indices if 0 <= i < len(site.cameras)) if site else ()
-        if len(cameras) < 2:
+        chosen = []
+        for site_name, index in picks:
+            site = self._workspace.site(site_name)
+            if site is not None and 0 <= index < len(site.cameras):
+                chosen.append((site_name, site.cameras[index]))
+        if len(chosen) < 2:
             self._clear_picked_cameras()
-            if cameras:   # turns to its page first when the site has more than one
-                self._on_camera_selected(site_name, cameras[0])
+            if chosen:   # turns to its page first when the site has more than one
+                self._on_camera_selected(*chosen[0])
             return
-        self._picked_cameras = cameras
+        sites = {site_name for site_name, _camera in chosen}
+        if len(sites) == 1 and self._active_site_name not in sites:
+            self._remember_site(sites.pop())   # all from one other site: it becomes the one on screen
+        self._picked_cameras = tuple(chosen)
         self._page = 0
         self._show_current_page()
+
+    def _remember_site(self, site_name: str) -> None:
+        self._active_site_name = site_name
+        self._workspace = self._workspace.with_last_site(site_name)
+        self._persist()
+
+    @property
+    def _watched_sites(self) -> tuple[Site, ...]:
+        """AI connections follow the wall: every site a picked camera comes from."""
+        if self._picked_cameras:
+            names = dict.fromkeys(site_name for site_name, _camera in self._picked_cameras)
+            return tuple(site for site in map(self._workspace.site, names) if site is not None)
+        return (self._site,) if self._site is not None else ()
+
+    @property
+    def _wall_title(self) -> str:
+        names = [site.name for site in self._watched_sites] or [self._active_site_name]
+        return self._translator.t("list_separator").join(names)
 
     def _clear_picked_cameras(self) -> None:
         if self._picked_cameras:
@@ -564,7 +416,8 @@ class MainWindow(QMainWindow):
             return
         before, self._workspace = self._workspace, updated
         self._persist()
-        if action == "edit_camera" and site_name == self._active_site_name:
+        if action == "edit_camera" and (site_name == self._active_site_name
+                                        or (site_name, old) in self._picked_cameras):
             self._show_replaced_camera(old, updated.site(site_name).cameras[index])
         else:
             self._apply_workspace_change(before)
@@ -581,7 +434,9 @@ class MainWindow(QMainWindow):
         if wall_needs_reload(before, self._workspace, self._active_site_name):
             self._reload_sites()
         else:
+            # The tree is rebuilt without the picks, and a picked camera may have just changed.
             self._navigation.set_workspace(self._workspace)
+            self._clear_picked_cameras()
 
     def _on_tiles_changed(self, tiles: int) -> None:
         """Only the page layout changes; the playback backend and its decoders stay."""
@@ -596,11 +451,10 @@ class MainWindow(QMainWindow):
         self._page = 0
         self._show_current_page()
 
-    def _on_language_selected(self, index: int) -> None:
-        language = self._language_box.itemData(index)
+    def _on_language_selected(self, language: str) -> None:
         if language == self._translator.language:
             return
-        self._workspace = self._workspace.with_language(str(language))
+        self._workspace = self._workspace.with_language(language)
         self._translator = Translator(self._workspace.language)
         self._workspace = self._workspace.with_sidebar(self._sidebar_width(),
                                                        self._workspace.sidebar_visible)
@@ -661,14 +515,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_strict_sync(self, enabled: bool) -> None:
         if not self._set_strict_sync(enabled):
-            self._sync_button.setChecked(self._workspace.strict_sync)
-
-    def _refresh_sync_button(self) -> None:
-        self._sync_button.setToolTip(self._translator.t(
-            "disable_strict_sync" if self._workspace.strict_sync else "enable_strict_sync"))
+            self._control_bar.set_sync(self._workspace.strict_sync)
 
     def _set_strict_sync(self, enabled: bool) -> bool:
-        """Atomically replace the wall backend after diagnostics approve its sources."""
+        """Swap the wall's backend; a missing GStreamer runtime leaves the current one in place."""
         if enabled == self._workspace.strict_sync:
             return True
         try:
@@ -683,8 +533,7 @@ class MainWindow(QMainWindow):
         self._wall.configure(new_factory, self._workspace.tiles_per_page)
         old_factory.shutdown()
         self._workspace = self._workspace.with_strict_sync(enabled)
-        self._sync_button.setChecked(enabled)
-        self._refresh_sync_button()
+        self._control_bar.set_sync(enabled)
         self._persist()
         logger().info("strict timestamp sync %s", "enabled" if enabled else "disabled")
         self._show_current_page()
@@ -707,7 +556,8 @@ class MainWindow(QMainWindow):
         """One edited camera reconnects alone, unless strict sync forces the whole page."""
         if self._focused_camera == old:
             self._focused_camera = new
-        self._picked_cameras = tuple(new if c == old else c for c in self._picked_cameras)
+        self._picked_cameras = tuple((site_name, new if camera == old else camera)
+                                     for site_name, camera in self._picked_cameras)
         self._navigation.set_workspace(self._workspace)
         if not self._wall.replace_camera(old, new):
             self._show_current_page()
@@ -719,7 +569,8 @@ class MainWindow(QMainWindow):
         self._apply_workspace_change(before)
 
     def _on_workspace_edited(self, workspace: Workspace) -> None:
-        """Each settings action is saved at once; the wall waits until the dialog closes."""
+        """Every committed change, Save of camera drafts included, is persisted at once; the wall
+        waits until the dialog closes."""
         self._workspace = workspace
         self._persist()
         self._navigation.set_workspace(workspace)
@@ -728,7 +579,7 @@ class MainWindow(QMainWindow):
     def _displayed_cameras(self) -> tuple[Camera, ...]:
         if self._focused_camera is not None:
             return (self._focused_camera,)
-        return self._picked_cameras or self._cameras
+        return tuple(camera for _site, camera in self._picked_cameras) or self._cameras
 
     def _toggle_camera_focus(self, camera: Camera) -> None:
         """Reflow an existing tile; focus must never tear down a healthy RTSP session.

@@ -1,8 +1,7 @@
-"""Turn a Camera into a playable URL.
+"""Camera URLs at play time: credentials go in only here, plus stream switching and redaction.
 
-The only module that knows how the pieces (host, port, credentials, vendor path)
-become a string. Separate from the model so adding a protocol never touches
-validation, and separate from the GUI so it stays testable as a plain function.
+Separate from the model so playback concerns never touch validation, and from the GUI
+so they stay testable as plain functions.
 """
 from __future__ import annotations
 
@@ -22,19 +21,12 @@ def build_url(camera: Camera) -> str:
     return _with_credentials(camera.url, camera.user, camera.password)
 
 
-def display_url(camera: Camera) -> str:
-    """build_url with the password replaced by asterisks, safe to show on screen."""
-    return _with_credentials(camera.url, camera.user, MASK if camera.password else "",
-                             quote_password=False)
-
-
-def _with_credentials(url: str, user: str, password: str, quote_password: bool = True) -> str:
+def _with_credentials(url: str, user: str, password: str) -> str:
     """Insert user:password into a network URL; local paths and empty users stay as they are."""
     parts = urlsplit(url)
     if not user or not parts.netloc:
         return url
-    secret = quote(password, safe="") if quote_password else password
-    userinfo = quote(user, safe="") + (f":{secret}" if password else "")
+    userinfo = quote(user, safe="") + (f":{quote(password, safe='')}" if password else "")
     return urlunsplit(parts._replace(netloc=f"{userinfo}@{parts.netloc}"))
 
 

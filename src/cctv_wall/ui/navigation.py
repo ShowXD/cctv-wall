@@ -90,10 +90,10 @@ class SiteNavigation(QFrame):
     def __init__(self, on_site_selected: Callable[[str], None],
                  on_settings_requested: Callable[[], None],
                  on_site_action: Callable[[str, str], None], translator: Translator,
-                 on_camera_selected: Callable[[str, Camera], None] | None = None,
-                 on_reorder: Callable[[Workspace], None] | None = None,
-                 on_camera_action: Callable[[str, str, int], None] | None = None,
-                 on_cameras_picked: Callable[[str, tuple[int, ...]], None] | None = None) -> None:
+                 on_camera_selected: Callable[[str, Camera], None],
+                 on_reorder: Callable[[Workspace], None],
+                 on_camera_action: Callable[[str, str, int], None],
+                 on_cameras_picked: Callable[[tuple[tuple[str, int], ...]], None]) -> None:
         super().__init__()
         self.setObjectName("siteNavigation")
         self.setMinimumWidth(160)
@@ -177,20 +177,19 @@ class SiteNavigation(QFrame):
             self._on_site_selected(site_name)
             return
         camera = self._camera(site_name, camera_index)
-        if camera is not None and self._on_camera_selected is not None:
+        if camera is not None:
             self._on_camera_selected(site_name, camera)
 
     def _pick(self, item: QTreeWidgetItem) -> None:
-        """Toggle one camera in the set to watch; picks stay within one site."""
-        site_name, _index = _reference(item)
-        picked = [i for i in self._sites.selectedItems() if i.parent() is item.parent()]
-        others = [i for i in self._sites.selectedItems() if i not in picked]
-        for other in others:   # a site row, or cameras of another site
-            other.setSelected(False)
-        item.setSelected(item not in picked)
-        indices = tuple(sorted(_reference(i)[1] for i in self._sites.selectedItems()))
-        if self._on_cameras_picked is not None:
-            self._on_cameras_picked(site_name, indices)
+        """Toggle one camera in the set to watch; the set may span several sites."""
+        selected = self._sites.selectedItems()
+        for other in selected:
+            if other.parent() is None:
+                other.setSelected(False)   # a site row is a place, not a camera to watch
+        item.setSelected(item not in selected)
+        picked = sorted(self._sites.selectedItems(),
+                        key=lambda i: (self._sites.indexOfTopLevelItem(i.parent()), _reference(i)[1]))
+        self._on_cameras_picked(tuple(_reference(i) for i in picked))
 
     def clear_picks(self) -> None:
         """The wall shows the whole site again, so its row is the one selected; the next
@@ -208,8 +207,7 @@ class SiteNavigation(QFrame):
         return site.cameras[index] if site and index < len(site.cameras) else None
 
     def _apply_reorder(self) -> None:
-        if self._on_reorder is not None:
-            self._on_reorder(self._reordered_workspace())
+        self._on_reorder(self._reordered_workspace())
 
     def _reordered_workspace(self) -> Workspace:
         """Read the new order off the tree, keeping every camera's own settings."""
@@ -242,7 +240,7 @@ class SiteNavigation(QFrame):
             self._add_action(menu, self._translator.t("ai_feeds_action"), "ai_feeds", site_name)
             menu.addSeparator()
             self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
-        elif self._on_camera_action is not None:
+        else:
             for text, action in ((self._translator.t("edit_camera"), "edit_camera"),
                                  (self._translator.t("delete_camera"), "delete_camera")):
                 item = menu.addAction(text)

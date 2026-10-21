@@ -92,7 +92,8 @@ class WorkspaceEditor(QDialog):
         body.addLayout(form_column, 2)
         layout.addLayout(body, 1)
 
-        # No Close button: every action is already saved, and the title bar closes the dialog.
+        # No Close button: the title bar and Esc close the dialog through reject(), which asks
+        # about unsaved camera drafts.
         bottom = QHBoxLayout()
         bottom.setSpacing(GROUP_SPACING)
         bottom.addStretch(1)
@@ -249,9 +250,7 @@ class WorkspaceEditor(QDialog):
         return True
 
     def _with_site(self, index: int, site: Site) -> Workspace:
-        sites = list(self._workspace.sites)
-        sites[index] = site
-        return self._workspace.with_sites(sites)
+        return self._workspace.with_site(self._workspace.sites[index].name, site)
 
     def _with_cameras(self, site_index: int, cameras: list[Camera]) -> Workspace:
         site = self._workspace.sites[site_index]
@@ -356,12 +355,10 @@ class WorkspaceEditor(QDialog):
                                           self._translator.t("delete_site_confirm", name=self._site.name))
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            remaining = self._workspace.with_sites(
-                s for i, s in enumerate(self._workspace.sites) if i != site_index)
-            active = remaining.active_site
+            remaining = self._workspace.without_site(self._site.name)
             self._site_index = self._camera_index = None
             self._fill_form(None)
-            self._commit(lambda: remaining.with_last_site(active.name if active else ""))
+            self._commit(lambda: remaining)
             return
         camera_index = self._camera_index
         cameras = [c for i, c in enumerate(self._site.cameras) if i != camera_index]
@@ -379,10 +376,8 @@ class WorkspaceEditor(QDialog):
                 self._reload_tree()
                 self._select(site_index)
                 return
-            renamed = self._with_site(site_index, replace(site, name=name))
-            if self._workspace.last_site == site.name:
-                renamed = renamed.with_last_site(name)   # keep watching the same place
-            self._commit(lambda: renamed, (site_index, None))
+            self._commit(lambda: self._with_site(site_index, replace(site, name=name)),
+                         (site_index, None))
             return
         cameras = list(site.cameras)
         if name == cameras[camera_index].label:
@@ -406,7 +401,7 @@ class WorkspaceEditor(QDialog):
         return 0 <= self._camera_index + offset < len(self._site.cameras)
 
     def _move_selected(self, offset: int) -> None:
-        """排序就是清單順序：地點順序決定側欄排列，攝影機順序決定影像牆格子順序。"""
+        """List order is the order: sites order the sidebar, cameras order the wall's tiles."""
         if not self._can_move(offset):
             return
         site_index = self._site_index

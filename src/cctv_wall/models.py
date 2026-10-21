@@ -1,11 +1,10 @@
-"""Immutable domain model: Camera -> Site -> Workspace.
+"""不可變的領域模型：Camera → Site → Workspace。
 
-A site is a physical place (office, factory, home) holding several cameras;
-a workspace is every site plus what the app should remember between runs.
+地點是一個實際場所（辦公室、工廠、住家），底下有多台攝影機；工作區是所有地點，
+加上程式跨次啟動要記住的偏好設定。
 
-Invalid values are rejected in __post_init__, so every other module can trust
-whatever it is handed and skip defensive re-checks. Updates return new objects
-(`with_*` / dataclasses.replace) — nothing here is ever mutated in place.
+不合法的值在 __post_init__ 就被拒絕，其他模組拿到的物件都可信任、不必再檢查。
+更新一律回傳新物件（`with_*` / dataclasses.replace），這裡的東西從不原地修改。
 """
 from __future__ import annotations
 
@@ -24,9 +23,9 @@ MAX_PORT = 65535
 NAME_LIMIT = 48
 SCHEMA_VERSION = 1
 DEFAULT_TILES_PER_PAGE = 4
-# A fixed ceiling on concurrent decoders; more than this is unwatchable on one screen anyway.
+# 同時解碼的上限；再多在一個螢幕上也看不清楚。
 TILES_LIMIT = 36
-# Older files stored a named performance profile instead of a tile count.
+# 舊版設定檔存的是效能檔名稱，不是每頁格數。
 LEGACY_PROFILE_TILES = {"low_end": 4, "balanced": 9, "full": 16}
 DEFAULT_GEOMETRY = "1280x800"
 DEFAULT_SIDEBAR_WIDTH = 260
@@ -94,7 +93,7 @@ class Camera:
     @property
     def label(self) -> str:
         """清單上要顯示的名稱；未命名時用網址，但絕不帶出帳密。刻意不依賴 urls.py，避免匯入循環。"""
-        return self.name or _without_credentials(self.url)[0]
+        return self.name or split_credentials(self.url)[0]
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> "Camera":
@@ -104,7 +103,7 @@ class Camera:
         網址裡夾帶的帳密則搬到帳密欄位（欄位已有值時以欄位為準）。
         """
         url = _text(raw.get("url")) or _legacy_url(raw)
-        url, embedded_user, embedded_password = _without_credentials(url)
+        url, embedded_user, embedded_password = split_credentials(url)
         return cls(
             name=_text(raw.get("name"))[:NAME_LIMIT],
             url=url,
@@ -116,7 +115,7 @@ class Camera:
         return {"name": self.name, "url": self.url, "user": self.user, "password": self.password}
 
 
-def _without_credentials(url: str) -> tuple[str, str, str]:
+def split_credentials(url: str) -> tuple[str, str, str]:
     """把 rtsp://user:pass@host/... 拆成不含帳密的網址與帳密；檔案路徑原樣回傳。"""
     parts = urlsplit(url)
     if "@" not in parts.netloc:
@@ -221,6 +220,13 @@ class Workspace:
     sidebar_visible: bool = True
     theme: str = DEFAULT_THEME
 
+    def __post_init__(self) -> None:
+        # 地點名稱就是地點的識別，重複了就分不出是哪一個。
+        names = [s.name for s in self.sites]
+        duplicate = next((n for n in names if names.count(n) > 1), None)
+        if duplicate:
+            raise ValueError(f"duplicate site name {duplicate!r}")
+
     def site(self, name: str) -> Site | None:
         return next((s for s in self.sites if s.name == name), None)
 
@@ -234,7 +240,7 @@ class Workspace:
         return tuple(s.name for s in self.sites)
 
     def unique_site_name(self, base: str) -> str:
-        """`base`, or `base 2`, `base 3`… — site names identify a place, so they must differ."""
+        """`base`，重複時依序試 `base 2`、`base 3`…，因為地點名稱不能重複。"""
         if self.site(base) is None:
             return base
         number = 2
@@ -255,10 +261,6 @@ class Workspace:
                 built.append(Site.from_raw(site))
             except ValueError as e:
                 raise ValueError(f"sites[{index}]: {e}") from e
-        names = [s.name for s in built]
-        duplicate = next((n for n in names if names.count(n) > 1), None)
-        if duplicate:
-            raise ValueError(f"duplicate site name {duplicate!r}")
         language = _text(raw.get("language")) or DEFAULT_LANGUAGE
         theme = _text(raw.get("theme"))
         return cls(
@@ -292,19 +294,28 @@ class Workspace:
     def with_sites(self, sites: Iterable[Site]) -> "Workspace":
         return replace(self, sites=tuple(sites))
 
+    def with_site(self, name: str, site: Site) -> "Workspace":
+        """把名為 `name` 的地點換成 `site`；改名時記住的地點跟著改，影像牆才會繼續看同一個地方。"""
+        return replace(self, sites=tuple(site if s.name == name else s for s in self.sites),
+                       last_site=site.name if self.last_site == name else self.last_site)
+
+    def without_site(self, name: str) -> "Workspace":
+        """刪掉一個地點；記住的地點改成剩下的第一個可用地點。"""
+        remaining = self.with_sites(s for s in self.sites if s.name != name)
+        active = remaining.active_site
+        return remaining.with_last_site(active.name if active else "")
+
     def with_camera_replaced(self, old: Camera, new: Camera) -> "Workspace":
         """替換第一個與 `old` 相等的攝影機；沒有匹配時回傳自己。
 
         Camera 是以值比較，所以別處長得一模一樣的副本不會被動到：
         呼叫端改的是某一格，不是所有剛好長一樣的攝影機。
         """
-        for site_index, site in enumerate(self.sites):
+        for site in self.sites:
             for index, camera in enumerate(site.cameras):
                 if camera == old:
                     cameras = (*site.cameras[:index], new, *site.cameras[index + 1:])
-                    return self.with_sites((*self.sites[:site_index],
-                                            site.with_cameras(cameras),
-                                            *self.sites[site_index + 1:]))
+                    return self.with_site(site.name, site.with_cameras(cameras))
         return self
 
     def with_last_site(self, name: str) -> "Workspace":
@@ -325,7 +336,7 @@ class Workspace:
         return replace(self, sidebar_width=_sidebar_width(width), sidebar_visible=visible)
 
     def with_ai_tile_rows(self, tile_key: str, tile_values: tuple[str, ...]) -> "Workspace":
-        """Every site's AI connections keep the same kinds under each tile."""
+        """每個地點的每條 AI 連線，畫格下方都留同樣的種類。"""
         return self.with_sites(
             replace(site, ai_feeds=tuple(replace(feed, tile_key=tile_key, tile_values=tile_values)
                                          for feed in site.ai_feeds))
