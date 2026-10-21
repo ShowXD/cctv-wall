@@ -1,12 +1,15 @@
-"""Persistent, bounded diagnostic log shared by the GUI and playback layer."""
+"""Persistent, bounded diagnostic log shared by the GUI and playback layer.
+
+Kept free of Qt so the playback and AI-feed modules can log without loading it; the
+in-app viewer subscribes with add_listener and moves lines onto its own thread.
+"""
 from __future__ import annotations
 
 import logging
 from collections import deque
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-
-from PySide6.QtCore import QObject, Signal
+from typing import Callable
 
 from cctv_wall.repository import default_config_path
 
@@ -14,36 +17,31 @@ LOGGER_NAME = "cctv_wall"
 IN_MEMORY_LIMIT = 1_000
 
 
-class _LiveLogBuffer(QObject):
-    """Small, thread-safe-by-signal mirror of the persistent diagnostic log."""
+class _MemoryHandler(logging.Handler):
+    """Keeps the last lines for the in-app viewer and tells listeners about each new one.
 
-    changed = Signal()
+    Records arrive on whichever thread logged them, so listeners must be thread-safe.
+    Nothing here redacts: callers log Camera.label or redact() URLs themselves.
+    """
 
     def __init__(self) -> None:
         super().__init__()
-        self._lines: deque[str] = deque(maxlen=IN_MEMORY_LIMIT)
-
-    def append(self, line: str) -> None:
-        self._lines.append(line)
-        self.changed.emit()
-
-    def text(self) -> str:
-        return "\n".join(self._lines)
-
-
-_live_buffer = _LiveLogBuffer()
-
-
-class _GuiLogHandler(logging.Handler):
-    """Feeds records to the in-app viewer without exposing URLs or credentials."""
+        self.lines: deque[str] = deque(maxlen=IN_MEMORY_LIMIT)
+        self.listeners: list[Callable[[str], None]] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        try:
-            _live_buffer.append(self.format(record))
-        except (RuntimeError, ValueError):
-            # Logging is diagnostic only.  In particular, shutdown must never fail because
-            # Qt has already destroyed the receiver.
-            pass
+        line = self.format(record)
+        self.lines.append(line)
+        for listener in tuple(self.listeners):
+            try:
+                listener(line)
+            except RuntimeError:
+                # Logging is diagnostic only; a viewer Qt already destroyed must not fail
+                # the code that logged, least of all during shutdown.
+                pass
+
+
+_memory = _MemoryHandler()
 
 
 def path() -> Path:
@@ -61,12 +59,11 @@ def configure() -> Path:
             handler.setFormatter(formatter)
             logger.addHandler(handler)
         except OSError:
-            # A read-only config directory must not prevent live monitoring.  The GUI
-            # buffer remains available and is intentionally preferable to a crash.
+            # A read-only config directory must not prevent live monitoring; the in-app
+            # log still works.
             pass
-        gui_handler = _GuiLogHandler()
-        gui_handler.setFormatter(formatter)
-        logger.addHandler(gui_handler)
+        _memory.setFormatter(formatter)
+        logger.addHandler(_memory)
         logger.setLevel(logging.INFO)
     return target
 
@@ -77,9 +74,13 @@ def logger() -> logging.Logger:
 
 def live_text() -> str:
     """The bounded in-memory log shown by the GUI, without a disk round-trip."""
-    return _live_buffer.text()
+    return "\n".join(_memory.lines)
 
 
-def live_buffer() -> _LiveLogBuffer:
-    """Expose change notifications to presentation code, not the mutable storage."""
-    return _live_buffer
+def add_listener(listener: Callable[[str], None]) -> None:
+    _memory.listeners.append(listener)
+
+
+def remove_listener(listener: Callable[[str], None]) -> None:
+    if listener in _memory.listeners:
+        _memory.listeners.remove(listener)

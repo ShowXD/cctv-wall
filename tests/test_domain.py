@@ -9,8 +9,7 @@ from cctv_wall import vendors
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.app import wall_needs_reload
 from cctv_wall.ui.camera_form import changed_fields
-from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, display_url,
-                           redact, stream_from_direct_url)
+from cctv_wall.urls import MASK, build_url, direct_url_with_stream, redact, stream_from_direct_url
 
 
 RTSP = "rtsp://10.0.0.5:554/stream1"
@@ -104,10 +103,6 @@ class TestBuildUrl:
     def test_a_local_file_never_gets_credentials(self):
         assert build_url(Camera(url="C:/a.mp4", user="x", password="y")) == "C:/a.mp4"
 
-    def test_display_url_masks_only_the_password(self):
-        shown = display_url(Camera(url=RTSP, user="admin", password="p@ss"))
-        assert shown == "rtsp://admin:****@10.0.0.5:554/stream1"
-
 
 class TestSiteAndWorkspace:
     def test_site_needs_a_name(self):
@@ -132,6 +127,22 @@ class TestSiteAndWorkspace:
     def test_duplicate_site_names_are_rejected(self):
         with pytest.raises(ValueError, match="duplicate site"):
             Workspace.from_raw({"sites": [{"name": "A"}, {"name": "A"}]})
+
+    def test_no_change_can_produce_duplicate_site_names(self):
+        with pytest.raises(ValueError, match="duplicate site"):
+            Workspace(sites=(Site("A"), Site("B"))).with_site("B", Site("A"))
+
+    def test_a_renamed_site_stays_the_one_on_screen(self):
+        workspace = Workspace(sites=(Site("A"), Site("B")), last_site="B")
+        renamed = workspace.with_site("B", Site("Gate"))
+        assert renamed.site_names == ("A", "Gate") and renamed.last_site == "Gate"
+        assert workspace.with_site("A", Site("Yard")).last_site == "B"
+
+    def test_deleting_the_site_on_screen_moves_to_the_first_left(self):
+        workspace = Workspace(sites=(Site("A"), Site("B")), last_site="A")
+        remaining = workspace.without_site("A")
+        assert remaining.site_names == ("B",) and remaining.last_site == "B"
+        assert remaining.without_site("B").last_site == ""
 
 
 class TestCameraReplacement:

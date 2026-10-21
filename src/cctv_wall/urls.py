@@ -22,19 +22,12 @@ def build_url(camera: Camera) -> str:
     return _with_credentials(camera.url, camera.user, camera.password)
 
 
-def display_url(camera: Camera) -> str:
-    """build_url with the password replaced by asterisks, safe to show on screen."""
-    return _with_credentials(camera.url, camera.user, MASK if camera.password else "",
-                             quote_password=False)
-
-
-def _with_credentials(url: str, user: str, password: str, quote_password: bool = True) -> str:
+def _with_credentials(url: str, user: str, password: str) -> str:
     """Insert user:password into a network URL; local paths and empty users stay as they are."""
     parts = urlsplit(url)
     if not user or not parts.netloc:
         return url
-    secret = quote(password, safe="") if quote_password else password
-    userinfo = quote(user, safe="") + (f":{secret}" if password else "")
+    userinfo = quote(user, safe="") + (f":{quote(password, safe='')}" if password else "")
     return urlunsplit(parts._replace(netloc=f"{userinfo}@{parts.netloc}"))
 
 

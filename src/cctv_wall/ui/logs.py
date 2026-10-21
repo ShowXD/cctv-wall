@@ -1,16 +1,21 @@
 """Live in-app diagnostics: event records and RTSP timestamp capability checks."""
 from __future__ import annotations
 
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
                                QTabWidget, QVBoxLayout, QWidget)
 
-from cctv_wall.event_log import live_buffer, live_text, logger
+from cctv_wall.event_log import IN_MEMORY_LIMIT, add_listener, live_text, logger, remove_listener
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera
 from cctv_wall.sync_probe import SyncProbeResult, probe_rtsp
 from cctv_wall.urls import build_url
+
+
+class _LineBridge(QObject):
+    """Log records arrive on any thread; the signal queues each line onto the GUI thread."""
+
+    line = Signal(str)
 
 
 class _SyncProbeWorker(QThread):
@@ -28,7 +33,7 @@ class _SyncProbeWorker(QThread):
         for index, camera in enumerate(self._cameras, start=1):
             if self.isInterruptionRequested():
                 break
-            label = camera.name or f"Camera {index}"
+            label = camera.label
             self.progress.emit(f"{index}/{len(self._cameras)}  {label}")
             try:
                 result = probe_rtsp(label, build_url(camera))
@@ -57,32 +62,19 @@ def show_log_dialog(parent: QWidget, translator: Translator, cameras: tuple[Came
     viewer = QPlainTextEdit()
     viewer.setReadOnly(True)
     viewer.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+    # Appending one line and dropping the oldest costs the same at any log size; re-setting
+    # the whole text on every record did not.
+    viewer.setMaximumBlockCount(IN_MEMORY_LIMIT)
+    viewer.setPlaceholderText(translator.t("no_events"))
+    viewer.setPlainText(live_text())
     log_layout.addWidget(viewer)
     tabs.addTab(log_page, translator.t("logs"))
 
-    def refresh_log() -> None:
-        # ``changed`` can already be queued when the modal dialog is being destroyed.
-        # Never let that harmless race print a PySide traceback after the window closed.
-        try:
-            current = live_text()
-            if viewer.toPlainText() == current:
-                return
-            viewer.setPlainText(current or translator.t("no_events"))
-            viewer.moveCursor(QTextCursor.MoveOperation.End)
-        except RuntimeError:
-            return
-
-    buffer = live_buffer()
-    buffer.changed.connect(refresh_log)
-
-    def disconnect_live_log(*_unused: object) -> None:
-        try:
-            buffer.changed.disconnect(refresh_log)
-        except (RuntimeError, TypeError):
-            pass
-
-    dialog.finished.connect(disconnect_live_log)
-    refresh_log()
+    bridge = _LineBridge(dialog)
+    bridge.line.connect(viewer.appendPlainText)
+    listener = bridge.line.emit   # one reference, so the same object can be removed again
+    add_listener(listener)
+    dialog.finished.connect(lambda _result: remove_listener(listener))
 
     sync_page = QWidget()
     sync_layout = QVBoxLayout(sync_page)

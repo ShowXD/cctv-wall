@@ -1,7 +1,9 @@
 """One restrained visual system for the monitoring workspace and its dialogs."""
 
+from typing import Callable
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QGuiApplication, QPalette
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 
 DARK_APPLICATION_STYLE = """
 * { font-family: "Segoe UI", "Microsoft JhengHei UI", "Noto Sans", sans-serif; font-size: 11pt; }
@@ -203,3 +205,14 @@ def application_palette(dark: bool) -> QPalette:
 def application_style(dark: bool) -> str:
     """Return an entire palette so every custom component follows the system appearance."""
     return DARK_APPLICATION_STYLE if dark else LIGHT_APPLICATION_STYLE
+
+
+def painted_icon(size: int, draw: Callable[[QPainter], None]) -> QIcon:
+    """A small antialiased icon; draw() sets its own pen and brush."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    draw(painter)
+    painter.end()
+    return QIcon(pixmap)

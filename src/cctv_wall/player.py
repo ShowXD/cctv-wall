@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import sys
 from enum import Enum
-from typing import Protocol, Sequence
+from typing import Protocol
 
-from cctv_wall.performance import INSTANCE_ARGS
+from cctv_wall.performance import INSTANCE_ARGS, media_options_for
 
 
 class PlaybackError(RuntimeError):
@@ -51,7 +51,7 @@ _VLC_STATE_NAMES: dict[str, PlaybackState] = {
 class Player(Protocol):
     """One video surface bound to one window."""
 
-    def play(self, url: str, options: Sequence[str], window_id: int) -> None: ...
+    def play(self, url: str, window_id: int) -> None: ...
 
     def state(self) -> PlaybackState: ...
 
@@ -60,6 +60,10 @@ class Player(Protocol):
 
 class PlayerFactory(Protocol):
     """Creates players and owns whatever they share."""
+
+    # True when every player runs on one shared clock: tiles cannot be started apart or
+    # reconnected one at a time without the whole page losing sync.
+    synchronized: bool
 
     def create(self) -> Player: ...
 
@@ -74,9 +78,9 @@ class VlcPlayer:
         self._player = instance.media_player_new()
         self._released = False
 
-    def play(self, url: str, options: Sequence[str], window_id: int) -> None:
+    def play(self, url: str, window_id: int) -> None:
         media = self._instance.media_new(url)
-        for option in options:
+        for option in media_options_for(url):
             media.add_option(option)
         self._player.set_media(media)
         self._embed(window_id)
@@ -128,6 +132,8 @@ class VlcPlayer:
 class VlcPlayerFactory:
     """Owns the shared libvlc Instance configured with the wall's tuning."""
 
+    synchronized = False
+
     def __init__(self) -> None:
         import vlc  # imported here so the app can start without VLC and explain why
 
@@ -146,12 +152,12 @@ class NullPlayer:
     """Records what it was asked to do. Used by the tests and by --dry-run."""
 
     def __init__(self, state: PlaybackState = PlaybackState.PLAYING) -> None:
-        self.calls: list[tuple[str, tuple[str, ...], int]] = []
+        self.calls: list[tuple[str, int]] = []
         self.released = False
         self.reported_state = state
 
-    def play(self, url: str, options: Sequence[str], window_id: int) -> None:
-        self.calls.append((url, tuple(options), window_id))
+    def play(self, url: str, window_id: int) -> None:
+        self.calls.append((url, window_id))
 
     def state(self) -> PlaybackState:
         return self.reported_state
@@ -162,6 +168,8 @@ class NullPlayer:
 
 class NullPlayerFactory:
     """A PlayerFactory that needs no VLC at all."""
+
+    synchronized = False
 
     def __init__(self, state: PlaybackState = PlaybackState.PLAYING) -> None:
         self.players: list[NullPlayer] = []

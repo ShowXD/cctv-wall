@@ -13,7 +13,6 @@ from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
-from cctv_wall.performance import media_options_for
 from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
@@ -38,8 +37,12 @@ MAX_RECONNECT_BACKOFF_TICKS = 6
 
 
 def _connection_start_interval(factory: PlayerFactory, tiles_per_page: int) -> int:
-    """Space normal RTSP connections without delaying the shared-clock backend."""
-    if getattr(factory, "synchronized", False):
+    """Gap between starting two tiles' connections.
+
+    Starting every RTSP session in the same event-loop turn can overwhelm a weak PC or a
+    camera/NVR with a small connection budget. The shared-clock backend starts them together.
+    """
+    if factory.synchronized:
         return 0
     if tiles_per_page <= 4:
         return 650
@@ -76,15 +79,15 @@ class _AiLine(QLabel):
 class VideoSurface(QWidget):
     """The native VLC target that forwards operator gestures to the Qt card."""
 
-    def __init__(self, on_solo: Callable[[], None], on_menu: Callable[[QContextMenuEvent], None]) -> None:
+    def __init__(self, on_focus: Callable[[], None], on_menu: Callable[[QContextMenuEvent], None]) -> None:
         super().__init__()
-        self._on_solo = on_solo
+        self._on_focus = on_focus
         self._on_menu = on_menu
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self._on_solo()
+            self._on_focus()
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -97,18 +100,18 @@ class VideoTile(QFrame):
     """A video-first camera card; metadata stays in a tooltip unless an error needs attention."""
 
     def __init__(self, camera: Camera, translator: Translator,
-                 on_solo: Callable[[Camera], None] | None,
-                 on_stream_change: Callable[[Camera, int], None] | None,
-                 on_retry: Callable[[Camera], None] | None = None) -> None:
+                 on_focus: Callable[[Camera], None],
+                 on_stream_change: Callable[[Camera, int], None],
+                 on_retry: Callable[[Camera], None]) -> None:
         super().__init__()
         self.camera = camera
         self._translator = translator
-        self._on_solo = on_solo
+        self._on_focus = on_focus
         self._on_stream_change = on_stream_change
         self._on_retry = on_retry
         self.setObjectName("videoTile")
         self.setMinimumSize(180, 120)
-        self.surface = VideoSurface(self._open_solo, self._show_stream_menu)
+        self.surface = VideoSurface(lambda: self._on_focus(self.camera), self._show_stream_menu)
         self.surface.setObjectName("videoSurface")
         card = QVBoxLayout(self)
         card.setContentsMargins(1, 1, 1, 1)
@@ -126,13 +129,12 @@ class VideoTile(QFrame):
         self._notice.setCursor(Qt.CursorShape.PointingHandCursor)
         self._notice.hide()
         card.addWidget(self._notice)
-        self._set_tooltip()
+        self.setToolTip(camera.label)   # the picture is the UI; hover only names the source
 
 
     def show_notice(self, message: str, level: str) -> None:
-        self._set_tooltip()
-        # Transient buffering is normal for CCTV streams.  Only show a panel when an
-        # operator needs to act, otherwise preserve every pixel for video.
+        # Buffering is normal for CCTV, so it gets no strip: only errors and the strict-sync
+        # wait take pixels from the video.
         if level not in ("error", "sync"):
             self._notice.hide()
             return
@@ -142,7 +144,6 @@ class VideoTile(QFrame):
         self._notice.show()
 
     def set_playing(self) -> None:
-        self._set_tooltip()
         self._notice.hide()
 
     def set_camera(self, camera: Camera) -> None:
@@ -152,7 +153,7 @@ class VideoTile(QFrame):
                 line.deleteLater()
             self._ai_lines.clear()
         self.camera = camera
-        self._set_tooltip()
+        self.setToolTip(camera.label)
 
     def show_ai_event(self, text: str, colour: str, line: int = 0) -> None:
         """Latest AI result of one kind for this camera; the full history lives in the side
@@ -163,11 +164,6 @@ class VideoTile(QFrame):
             self._ai_box.insertWidget(sorted(self._ai_lines).index(line), ai_line)
         ai_line.show_result(text, colour)
 
-    def _set_tooltip(self) -> None:
-        # The image itself is the primary UI. Hover should identify the source only;
-        # connection state and gesture hints add noise while inspecting a live scene.
-        self.setToolTip(self.camera.label)
-
     @staticmethod
     def _refresh_style(widget: QWidget) -> None:
         widget.style().unpolish(widget)
@@ -175,16 +171,11 @@ class VideoTile(QFrame):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         position = event.position().toPoint()
-        if (self._on_retry is not None and self._notice.isVisible()
-                and self._notice.geometry().contains(position)):
+        if self._notice.isVisible() and self._notice.geometry().contains(position):
             self._on_retry(self.camera)
             event.accept()
             return
         super().mousePressEvent(event)
-
-    def _open_solo(self) -> None:
-        if self._on_solo is not None:
-            self._on_solo(self.camera)
 
     def _show_stream_menu(self, event: QContextMenuEvent) -> None:
         menu = QMenu(self.window())   # see SiteNavigation._show_context_menu
@@ -192,7 +183,7 @@ class VideoTile(QFrame):
         # Only a URL that names its stream (".../stream2", "?stream=2") can be switched;
         # guessing a vendor's URL format would break the camera instead.
         current_stream = stream_from_direct_url(self.camera.url)
-        can_switch = current_stream is not None and self._on_stream_change is not None
+        can_switch = current_stream is not None
         for stream in range(MIN_STREAM, MAX_STREAM + 1):
             action = QAction(self._translator.t("stream_choice", stream=stream), menu)
             action.setCheckable(True)
@@ -204,8 +195,7 @@ class VideoTile(QFrame):
         menu.deleteLater()
 
     def _choose_stream(self, stream: int) -> None:
-        if (self._on_stream_change is not None
-                and stream != stream_from_direct_url(self.camera.url)):
+        if stream != stream_from_direct_url(self.camera.url):
             self._on_stream_change(self.camera, stream)
 
 
@@ -251,18 +241,16 @@ def _due_for_retry(tile: _Tile) -> bool:
 class WallView(QWidget):
     """Renders one page, preserving the low-memory one-player-per-visible-tile rule."""
 
-    def __init__(self, factory: PlayerFactory,
-                 tiles_per_page: int, on_solo: Callable[[Camera], None] | None = None,
-                 on_health_change: Callable[[], None] | None = None,
-                 translator: Translator | None = None,
-                 on_stream_change: Callable[[Camera, int], None] | None = None) -> None:
+    def __init__(self, factory: PlayerFactory, tiles_per_page: int, translator: Translator,
+                 on_focus: Callable[[Camera], None], on_health_change: Callable[[], None],
+                 on_stream_change: Callable[[Camera, int], None]) -> None:
         super().__init__()
         self._factory = factory
         self._tiles_per_page = tiles_per_page
         self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
-        self._on_solo = on_solo
+        self._on_focus = on_focus
         self._on_health_change = on_health_change
-        self._translator = translator or Translator()
+        self._translator = translator
         self._on_stream_change = on_stream_change
         self._tiles: list[_Tile] = []
         self._focused_tile: _Tile | None = None
@@ -323,21 +311,18 @@ class WallView(QWidget):
         """Players already created for the visible page; queued tiles are not connected yet."""
         return sum(tile.player is not None for tile in self._tiles)
 
-    def show_page(self, cameras: Sequence[Camera], page: int = 0) -> int:
+    def show_page(self, cameras: Sequence[Camera], page: int = 0) -> None:
         self.stop()
         self._clear_widgets()
         visible = cameras[layout.page_slice(page, self.tiles_per_page)]
         if not visible:
             self._show_hint(self._translator.t("no_cameras"), self._translator.t("add_camera_hint"))
-            return 0
+            return
         _rows, columns = layout.grid_shape(len(visible))
         for index, camera in enumerate(visible):
-            # A direct RTSP URL may contain credentials. It remains useful as a visual
-            # fallback label in the navigation tree, but must never escape into logs.
-            log_label = camera.name or f"Camera {index + 1}"
-            tile = _Tile(VideoTile(camera, self._translator, self._on_solo,
+            tile = _Tile(VideoTile(camera, self._translator, self._on_focus,
                                    self._on_stream_change, self._retry_camera),
-                         log_label)
+                         camera.label)
             self._tiles.append(tile)
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.surface.winId()
@@ -347,7 +332,6 @@ class WallView(QWidget):
         # Delay the first health warning until every staggered connection has had time to
         # negotiate. This avoids misleading "offline" reports on slower PCs.
         self._audit_timer.start(FIRST_AUDIT_MS + self._start_interval_ms * len(visible))
-        return self.allocated_player_count
 
     def focus_camera(self, camera: Camera) -> bool:
         """Expand an already-playing tile without touching its RTSP connection."""
@@ -370,10 +354,10 @@ class WallView(QWidget):
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.show()
 
-    def show_ai_event(self, camera_name: str, text: str, colour: str, line: int = 0) -> None:
+    def show_ai_event(self, camera_label: str, text: str, colour: str, line: int = 0) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
         for tile in self._tiles:
-            if tile.view.camera.label == camera_name:
+            if tile.view.camera.label == camera_label:
                 tile.view.show_ai_event(text, colour, line)
 
     def stop(self) -> None:
@@ -424,10 +408,10 @@ class WallView(QWidget):
         tile = next((t for t in self._tiles if t.view.camera == old), None)
         if tile is None:
             return True
-        if getattr(self._factory, "synchronized", False):
+        if self._factory.synchronized:
             return False
         tile.view.set_camera(new)
-        tile.log_label = new.name or tile.log_label
+        tile.log_label = new.label
         if tile in self._pending_starts:
             return True   # not connected yet; it will start with the new settings
         tile.reset_backoff()
@@ -487,8 +471,7 @@ class WallView(QWidget):
                 continue
             retried = self._advance_reconnect(tile)
             tile.view.show_notice(self._outage_message(tile, explanation, retried), "error")
-        if self._on_health_change is not None:
-            self._on_health_change()
+        self._on_health_change()
         if self._tiles:
             self._audit_timer.start(AUDIT_INTERVAL_MS)
 
@@ -513,7 +496,7 @@ class WallView(QWidget):
 
     def _show_opening(self, tile: _Tile) -> None:
         """Strict sync holds every picture for its shared delay, so say why the tile is still empty."""
-        if getattr(self._factory, "synchronized", False):
+        if self._factory.synchronized:
             tile.view.show_notice(self._translator.t("syncing"), "sync")
         else:
             tile.view.show_notice(self._translator.t("connection_waiting"), "warning")
@@ -525,8 +508,7 @@ class WallView(QWidget):
             logger().info("connecting camera=%s", tile.log_label)
             url = build_url(camera)
             player = self._factory.create()
-            player.play(url, media_options_for(url),
-                        int(tile.view.surface.winId()))
+            player.play(url, int(tile.view.surface.winId()))
             tile.player = player
             state = player.state()
             self._log_state_change(tile, state)

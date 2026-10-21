@@ -10,7 +10,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from cctv_wall.event_log import logger
 from cctv_wall.player import PlaybackError, PlaybackState
@@ -108,7 +108,7 @@ class GStreamerSyncPlayer:
         self._bus: Any | None = None
         self._error = ""
 
-    def play(self, url: str, _options: Sequence[str], window_id: int) -> None:
+    def play(self, url: str, window_id: int) -> None:
         if not url.lower().startswith("rtsp://"):
             raise PlaybackError("strict timestamp sync supports RTSP cameras only")
         gst = self._gst

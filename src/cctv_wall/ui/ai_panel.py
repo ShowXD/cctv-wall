@@ -7,13 +7,14 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from PySide6.QtCore import QObject, QTimer, Qt, Signal
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPainter
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QListWidget, QListWidgetItem, QVBoxLayout
 
 from cctv_wall.ai_feed import (ALIGN_AI_TIME, STATUS_CONNECTED, AiEvent, AiFeedClient, AiFeedConfig,
                                release_due)
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site
+from cctv_wall.ui.theme import painted_icon
 
 MAX_ROWS = 500
 RELEASE_INTERVAL_MS = 200
@@ -50,15 +51,11 @@ def wrappable(text: str) -> str:
 
 
 def _dot(colour: str) -> QIcon:
-    pixmap = QPixmap(12, 12)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(colour))
-    painter.drawEllipse(1, 1, 10, 10)
-    painter.end()
-    return QIcon(pixmap)
+    def draw(painter: QPainter) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(colour))
+        painter.drawEllipse(1, 1, 10, 10)
+    return painted_icon(12, draw)
 
 
 def tile_text(event: AiEvent) -> str:
@@ -73,7 +70,7 @@ class AiEventPanel(QFrame):
     def __init__(self, translator: Translator,
                  on_event_shown: Callable[[str, str, str, int], None],
                  on_camera_chosen: Callable[[Camera], None],
-                 on_connection_change: Callable[[int, int], None] | None = None) -> None:
+                 on_connection_change: Callable[[int, int], None]) -> None:
         super().__init__()
         self.setObjectName("aiPanel")
         self.setMinimumWidth(260)
@@ -177,8 +174,7 @@ class AiEventPanel(QFrame):
                                       address=feed_client.config.address)
             lines.append(f'<span style="color:{colour}">●</span> {text}')
         self._status.setText("<br>".join(lines))
-        if self._on_connection_change is not None:
-            self._on_connection_change(sum(self._connected.values()), len(self._connected))
+        self._on_connection_change(sum(self._connected.values()), len(self._connected))
 
     def _release(self) -> None:
         now = time.time()
@@ -187,8 +183,8 @@ class AiEventPanel(QFrame):
                 self._add_row(event)
                 line = client.config.tile_row(event.group)
                 if line is not None:   # a kind not ticked for the tiles stays in this list only
-                    self._on_event_shown(event.camera, tile_text(event), self._colour(event.camera),
-                                         line)
+                    self._on_event_shown(event.camera_label, tile_text(event),
+                                         self._colour(event.camera_label), line)
 
     def _colour(self, camera_label: str) -> str:
         labels = [camera.label for camera in self._site.cameras] if self._site is not None else []
@@ -207,10 +203,10 @@ class AiEventPanel(QFrame):
         so scrolling back to read is not yanked away."""
         marker = "⚠ " if event.has_clock_skew else ""
         shown = event.event_time if event.event_time is not None else event.received_at
-        item = QListWidgetItem(f"{marker}{short_camera_name(event.camera)}  ·  {_clock(shown)}\n"
+        item = QListWidgetItem(f"{marker}{short_camera_name(event.camera_label)}  ·  {_clock(shown)}\n"
                                f"{wrappable(event.text)}")
-        item.setIcon(self._dot_for(event.camera))
-        item.setData(Qt.ItemDataRole.UserRole, event.camera)
+        item.setIcon(self._dot_for(event.camera_label))
+        item.setData(Qt.ItemDataRole.UserRole, event.camera_label)
         tip = self._translator.t(
             "ai_event_tip",
             ai_time=_clock(event.event_time, True) if event.event_time is not None else "—",
@@ -221,7 +217,7 @@ class AiEventPanel(QFrame):
         scroll = self._list.verticalScrollBar()
         following = scroll.value() >= scroll.maximum()
         self._list.addItem(item)
-        item.setHidden(self._hidden(event.camera))
+        item.setHidden(self._hidden(event.camera_label))
         while self._list.count() > MAX_ROWS:
             self._list.takeItem(0)
         if following:
@@ -240,9 +236,9 @@ class AiEventPanel(QFrame):
         self._filter.blockSignals(False)
         self._apply_filter()
 
-    def _hidden(self, camera_name: str) -> bool:
+    def _hidden(self, camera_label: str) -> bool:
         chosen = self._filter.currentData()
-        return chosen is not None and chosen != camera_name
+        return chosen is not None and chosen != camera_label
 
     def _apply_filter(self) -> None:
         for row in range(self._list.count()):
@@ -250,8 +246,8 @@ class AiEventPanel(QFrame):
             item.setHidden(self._hidden(item.data(Qt.ItemDataRole.UserRole)))
 
     def _choose_camera(self, item: QListWidgetItem) -> None:
-        name = item.data(Qt.ItemDataRole.UserRole)
+        label = item.data(Qt.ItemDataRole.UserRole)
         site = self._site
-        camera = next((c for c in site.cameras if c.label == name), None) if site else None
+        camera = next((c for c in site.cameras if c.label == label), None) if site else None
         if camera is not None:
             self._on_camera_chosen(camera)

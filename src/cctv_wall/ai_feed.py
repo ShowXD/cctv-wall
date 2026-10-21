@@ -207,7 +207,7 @@ def _scalar(value: Any) -> str:
 
 @dataclass(frozen=True, slots=True)
 class AiEvent:
-    camera: str
+    camera_label: str                  # 對到的攝影機（Camera.label）
     text: str
     received_at: float                 # 本機 epoch 秒
     event_time: float | None = None    # AI 端 epoch 秒；沒送或看不懂時為 None

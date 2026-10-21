@@ -49,7 +49,7 @@ class TestParseLine:
     def test_custom_keys(self):
         config = AiFeedConfig(host="h", port=1, camera_key="cam_id", time_key="")
         event = parse_line('{"cam_id": 3, "ts": 5}', config, received_at=10.0)
-        assert event.camera == "3" and event.event_time is None and event.text == "ts=5"
+        assert event.camera_label == "3" and event.event_time is None and event.text == "ts=5"
 
     def test_large_skew_is_flagged(self):
         event = parse_line('{"camera": "Gate", "ts": 100}', CONFIG, received_at=110.0)
@@ -79,7 +79,7 @@ class TestRealSample:
         line = ('{"eventType":4,"cameraName":"A001","created":"2026-10-19 12:10:49.750",'
                 '"payload":[{"duration":0,"id":-1,"trackingId":667814,"vdType":2}]}')
         event = parse_line(line, SAMPLE, received_at=0.0)
-        assert event.camera == "Front Gate"
+        assert event.camera_label == "Front Gate"
         assert event.event_time == pytest.approx(datetime(2026, 10, 19, 12, 10, 49, 750000).timestamp())
         assert event.text == ('eventType=路口停等偵測  payload=[{"duration":0,"id":-1,'
                               '"trackingId":667814,"vdType":"汽車"}]')
@@ -113,8 +113,8 @@ class TestReleaseDue:
     def test_events_wait_for_the_video_delay(self):
         pending = deque([AiEvent("A", "", 10.0), AiEvent("B", "", 10.5)])
         assert release_due(pending, now=11.0, config=self.BY_ARRIVAL) == []
-        assert [e.camera for e in release_due(pending, now=11.5, config=self.BY_ARRIVAL)] == ["A"]
-        assert [e.camera for e in release_due(pending, now=12.0, config=self.BY_ARRIVAL)] == ["B"]
+        assert [e.camera_label for e in release_due(pending, now=11.5, config=self.BY_ARRIVAL)] == ["A"]
+        assert [e.camera_label for e in release_due(pending, now=12.0, config=self.BY_ARRIVAL)] == ["B"]
         assert not pending
 
     def test_zero_delay_releases_immediately(self):
@@ -124,7 +124,7 @@ class TestReleaseDue:
     def test_aligned_to_ai_time_a_slow_ai_does_not_push_the_result_later(self):
         # Analysed at 10.0, arrived 0.8 s later: shown at 10.0 + 1.5, not 10.8 + 1.5.
         pending = deque([AiEvent("A", "", received_at=10.8, event_time=10.0)])
-        assert [e.camera for e in release_due(pending, now=11.5, config=self.BY_AI_TIME)] == ["A"]
+        assert [e.camera_label for e in release_due(pending, now=11.5, config=self.BY_AI_TIME)] == ["A"]
 
     def test_without_a_usable_ai_time_it_falls_back_to_arrival(self):
         assert due_at(AiEvent("A", "", 10.8), self.BY_AI_TIME) == 12.3
@@ -204,8 +204,8 @@ class TestClient:
                               events.put, statuses.put)
         client.start()
         try:
-            assert events.get(timeout=5).camera == "A"
-            assert events.get(timeout=5).camera == "B"   # after the first backoff
+            assert events.get(timeout=5).camera_label == "A"
+            assert events.get(timeout=5).camera_label == "B"   # after the first backoff
             assert STATUS_CONNECTED in list(statuses.queue)
         finally:
             client.stop()

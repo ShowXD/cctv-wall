@@ -186,18 +186,25 @@ class _CodePicker(QWidget):
                 if self._values.item(row).checkState() == Qt.CheckState.Checked]
 
 
-def _show_filter(button: QPushButton, fields: dict[str, list[tuple[str, str]]],
-                 translator: Translator) -> None:
-    """The button carries its camera's (field, codes) as .rule; its text names the kept kinds."""
-    if not button.rule:
-        button.setText(translator.t("ai_filter_all"))
-        button.setToolTip("")
-        return
-    field_name, values = button.rule
-    names = dict(fields.get(field_name, []))
-    shown = translator.t("list_separator").join(names.get(code, code) for code in values)
-    button.setText(shown)
-    button.setToolTip(translator.t("ai_filter_summary", field=field_name, values=shown))
+class _FilterButton(QPushButton):
+    """One mapping row's camera filter, (field, codes) or None, shown as the kinds it keeps."""
+
+    def __init__(self, translator: Translator) -> None:
+        super().__init__()
+        self._translator = translator
+        self.rule: tuple[str, list[str]] | None = None
+
+    def show_rule(self, fields: dict[str, list[tuple[str, str]]]) -> None:
+        """Codes read as their label text; the format's labels may have changed since."""
+        if not self.rule:
+            self.setText(self._translator.t("ai_filter_all"))
+            self.setToolTip("")
+            return
+        field_name, values = self.rule
+        names = dict(fields.get(field_name, []))
+        shown = self._translator.t("list_separator").join(names.get(code, code) for code in values)
+        self.setText(shown)
+        self.setToolTip(self._translator.t("ai_filter_summary", field=field_name, values=shown))
 
 
 class AiFeedsDialog(QDialog):
@@ -338,7 +345,7 @@ class AiFeedsDialog(QDialog):
         box.addLayout(top)
         box.addWidget(tiles)
         box.addWidget(advanced, 1)
-        self._fields: dict[str, list[tuple[str, str]]] = {}
+        self._label_fields: dict[str, list[tuple[str, str]]] = {}
         return panel
 
     def _refresh_tile_keys(self) -> None:
@@ -346,12 +353,12 @@ class AiFeedsDialog(QDialog):
         fields = label_fields(self._advanced.toPlainText())
         if fields is None:
             return   # mid-edit, not valid JSON yet: keep what is offered
-        self._fields = fields
+        self._label_fields = fields
         self._tile_rows.set_fields(fields)
         for row in range(self._table.rowCount()):
-            _show_filter(self._table.cellWidget(row, 2), fields, self._translator)
+            self._table.cellWidget(row, 2).show_rule(fields)
 
-    def _edit_filter(self, button: QPushButton) -> None:
+    def _edit_filter(self, button: _FilterButton) -> None:
         row = next(row for row in range(self._table.rowCount())
                    if self._table.cellWidget(row, 2) is button)
         camera = self._table.cellWidget(row, 1).currentText() or self._table.item(row, 0).text()
@@ -360,7 +367,7 @@ class AiFeedsDialog(QDialog):
         box = QVBoxLayout(dialog)
         picker = _CodePicker(self._translator, self._translator.t("ai_filter_all"),
                              self._translator.t("ai_filter_help"))
-        picker.set_fields(self._fields)
+        picker.set_fields(self._label_fields)
         picker.set_choice(*(button.rule or ("", [])))
         box.addWidget(picker)
         buttons = QDialogButtonBox()
@@ -374,7 +381,7 @@ class AiFeedsDialog(QDialog):
             return
         # Nothing ticked keeps every result: a filter that lets nothing through is never wanted.
         button.rule = (picker.key(), picker.values()) if picker.key() and picker.values() else None
-        _show_filter(button, self._fields, self._translator)
+        button.show_rule(self._label_fields)
 
     def _feed_label(self, host: str, port: str) -> str:
         return f"{host}:{port}" if host else self._translator.t("ai_new_feed")
@@ -443,9 +450,8 @@ class AiFeedsDialog(QDialog):
         combo.addItems(names)
         combo.setCurrentIndex(names.index(camera) if camera else -1)
         self._table.setCellWidget(row, 1, combo)
-        button = QPushButton()
-        button.rule = None
-        _show_filter(button, self._fields, self._translator)
+        button = _FilterButton(self._translator)
+        button.show_rule(self._label_fields)
         button.clicked.connect(lambda _checked=False, b=button: self._edit_filter(b))
         self._table.setCellWidget(row, 2, button)
 
