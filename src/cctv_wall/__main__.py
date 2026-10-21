@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QLoggingCategory, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -19,7 +19,7 @@ from cctv_wall.event_log import configure as configure_log, logger
 from cctv_wall.repository import (WorkspaceError, default_config_path, load_workspace,
                                   save_workspace)
 from cctv_wall.ui.startup import StartupProgress
-from cctv_wall.ui.theme import application_style
+from cctv_wall.ui.theme import application_palette, application_style, apply_theme
 from cctv_wall.vlc_runtime import configure as configure_vlc
 
 VLC_HINT = ("Install the VLC desktop app matching your Python's bitness (64-bit Python "
@@ -116,7 +116,9 @@ def _fail(message: str, status: int) -> int:
 def _apply_system_theme(application: QApplication, scheme: Qt.ColorScheme | None = None) -> None:
     """Match the operating-system appearance without changing any playback behaviour."""
     chosen = scheme or application.styleHints().colorScheme()
-    application.setStyleSheet(application_style(chosen == Qt.ColorScheme.Dark))
+    dark = chosen == Qt.ColorScheme.Dark
+    application.setPalette(application_palette(dark))
+    application.setStyleSheet(application_style(dark))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -136,6 +138,10 @@ def main(argv: list[str] | None = None) -> int:
             return _fail(f"libvlc is unavailable: {e}\n{VLC_HINT}", 2)
 
     application = QApplication(sys.argv)
+    # A theme change asks DWM to recolour every native window, and it refuses the child ones
+    # libvlc needs (one "Unable to set ... window border" per tile). The top-level title bar
+    # does change, so the warning is noise.
+    QLoggingCategory.setFilterRules("qt.qpa.window.warning=false")
     # Point sizes respect Windows display scaling; the platform default is too small for a
     # wall viewed from a distance.  Keep this independent from the visual theme.
     interface_font = QFont(application.font())
@@ -156,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         startup.dismiss()
         return _fail(f"{e}\n\nFix or delete {default_config_path()} and try again.", 1)
 
+    apply_theme(workspace.theme)
     startup.set_progress(45, "正在準備播放環境…")
     startup.set_progress(65, "正在載入監看介面…")
     try:

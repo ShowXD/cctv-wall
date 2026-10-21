@@ -5,13 +5,16 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Sequence
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-                               QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
+                               QGroupBox, QHBoxLayout, QHeaderView, QLabel,
+                               QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
+                               QPushButton,
                                QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget)
 
-from cctv_wall.ai_feed import (DEFAULT_CAMERA_KEY, DEFAULT_DELAY_MS, DEFAULT_TIME_KEY, MAX_DELAY_MS,
-                               AiFeedConfig)
+from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_CAMERA_KEY, DEFAULT_DELAY_MS,
+                               DEFAULT_TIME_KEY, MAX_DELAY_MS, AiFeedConfig)
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site
@@ -30,20 +33,42 @@ class FeedForm:
     delay_ms: int = DEFAULT_DELAY_MS
     mapping: list[tuple[str, str]] = field(default_factory=list)   # (AI id, camera name)
     advanced: str = ""
+    tile_key: str = ""
+    tile_values: list[str] = field(default_factory=list)
+    align: str = ALIGN_AI_TIME   # a connection set up from now on aligns to the AI's own time
+    filters: dict[str, tuple[str, list[str]]] = field(default_factory=dict)  # AI id -> (field, codes)
 
     @classmethod
     def from_config(cls, config: AiFeedConfig) -> "FeedForm":
         raw = config.as_dict()
         return cls(config.host, str(config.port), config.delay_ms, list(config.cameras),
-                   _advanced_text({key: raw[key] for key in ADVANCED_KEYS if key in raw}))
+                   _advanced_text({key: raw[key] for key in ADVANCED_KEYS if key in raw}),
+                   config.tile_key, list(config.tile_values), config.align,
+                   {source: (field_name, list(values))
+                    for source, field_name, values in config.camera_filters})
 
     def copy_format(self) -> "FeedForm":
         """A new connection usually speaks the same format as the one beside it."""
-        return FeedForm(delay_ms=self.delay_ms, advanced=self.advanced)
+        return FeedForm(delay_ms=self.delay_ms, advanced=self.advanced, tile_key=self.tile_key,
+                        tile_values=list(self.tile_values), align=self.align)
 
 
 def _advanced_text(values: dict[str, Any]) -> str:
     return json.dumps(values, ensure_ascii=False, indent=2)
+
+
+def label_fields(advanced: str) -> dict[str, list[tuple[str, str]]] | None:
+    """The labelled fields of a message format and their (code, text) pairs, in the order typed;
+    None while the text is not a valid JSON object, so a half-typed edit keeps the old choices."""
+    try:
+        values = json.loads(advanced) if advanced.strip() else {}
+    except ValueError:
+        return None
+    labels = values.get("labels") if isinstance(values, dict) else None
+    if not isinstance(labels, dict):
+        return None if not isinstance(values, dict) else {}
+    return {str(name): [(str(code), str(text)) for code, text in codes.items()]
+            for name, codes in labels.items() if isinstance(codes, dict)}
 
 
 def default_advanced() -> str:
@@ -71,8 +96,12 @@ def config_from_form(form: FeedForm) -> AiFeedConfig:
         if source in cameras:
             raise ValueError(f"AI id {source!r} is mapped twice")
         cameras[source] = camera
+    filters = {source: {field_name: values} for source, (field_name, values) in form.filters.items()
+               if source in cameras}
     return AiFeedConfig.from_raw({**advanced, "host": form.host, "port": form.port,
-                                  "delay_ms": form.delay_ms, "cameras": cameras})
+                                  "delay_ms": form.delay_ms, "cameras": cameras,
+                                  "tile_key": form.tile_key, "tile_values": form.tile_values,
+                                  "align": form.align, "camera_filters": filters})
 
 
 def feeds_from_forms(site_name: str, cameras: Iterable[Camera],
@@ -86,6 +115,89 @@ def feeds_from_forms(site_name: str, cameras: Iterable[Camera],
             raise ValueError(f"#{index} {form.host}: {error}") from error
     Site(site_name, tuple(cameras), tuple(feeds))
     return tuple(feeds)
+
+
+class _CodePicker(QWidget):
+    """A field and the codes ticked under it, both offered from the message format's labels."""
+
+    def __init__(self, translator: Translator, none_text: str, help_text: str,
+                 beside_key: QWidget | None = None) -> None:
+        """With beside_key the picker spans a wide row: that widget sits at the end of the field
+        row and the codes flow side by side, wrapping to the width."""
+        super().__init__()
+        self._none_text = none_text
+        self._fields: dict[str, list[tuple[str, str]]] = {}
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        key_row = QHBoxLayout()
+        key_row.addWidget(QLabel(translator.t("ai_tile_key")))
+        self._key = QComboBox()
+        self._key.currentIndexChanged.connect(lambda _index: self._show_values(self.values()))
+        key_row.addWidget(self._key, 0 if beside_key else 1)
+        if beside_key:
+            key_row.addStretch(1)
+            key_row.addWidget(beside_key)
+        box.addLayout(key_row)
+        help_label = QLabel(help_text)
+        help_label.setObjectName("formHelp")
+        help_label.setWordWrap(True)
+        box.addWidget(help_label)
+        self._values = QListWidget()
+        if beside_key:
+            self._values.setFlow(QListWidget.Flow.LeftToRight)
+            self._values.setWrapping(True)
+            self._values.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self._values.setSpacing(4)
+            self._values.setMaximumHeight(100)   # two or three wrapped rows of kinds
+        box.addWidget(self._values)
+
+    def set_fields(self, fields: dict[str, list[tuple[str, str]]]) -> None:
+        """New choices from the message format; keeps the current field and ticks where they remain."""
+        self._fields = fields
+        self.set_choice(self.key(), self.values())
+
+    def set_choice(self, key: str, values: Sequence[str]) -> None:
+        self._key.blockSignals(True)
+        self._key.clear()
+        self._key.addItem(self._none_text, "")
+        for name in self._fields:
+            self._key.addItem(name, name)
+        self._key.setCurrentIndex(max(self._key.findData(key), 0))
+        self._key.blockSignals(False)
+        self._show_values(values)
+
+    def _show_values(self, checked: Sequence[str]) -> None:
+        self._values.clear()
+        for code, text in self._fields.get(self.key(), []):
+            item = QListWidgetItem(f"{text}  ({code})")
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if code in checked else Qt.CheckState.Unchecked)
+            self._values.addItem(item)
+        self._values.setEnabled(bool(self.key()))
+
+    def key(self) -> str:
+        return self._key.currentData() or ""
+
+    def values(self) -> list[str]:
+        """In the order the format lists them, which is the order of the lines under a tile."""
+        return [self._values.item(row).data(Qt.ItemDataRole.UserRole)
+                for row in range(self._values.count())
+                if self._values.item(row).checkState() == Qt.CheckState.Checked]
+
+
+def _show_filter(button: QPushButton, fields: dict[str, list[tuple[str, str]]],
+                 translator: Translator) -> None:
+    """The button carries its camera's (field, codes) as .rule; its text names the kept kinds."""
+    if not button.rule:
+        button.setText(translator.t("ai_filter_all"))
+        button.setToolTip("")
+        return
+    field_name, values = button.rule
+    names = dict(fields.get(field_name, []))
+    shown = translator.t("list_separator").join(names.get(code, code) for code in values)
+    button.setText(shown)
+    button.setToolTip(translator.t("ai_filter_summary", field=field_name, values=shown))
 
 
 class AiFeedsDialog(QDialog):
@@ -102,8 +214,9 @@ class AiFeedsDialog(QDialog):
         self._forms = [FeedForm.from_config(feed) for feed in feeds]
         self._current: int | None = None
         self.result_feeds: tuple[AiFeedConfig, ...] | None = None
+        self.tile_rows_for_all_sites: tuple[str, tuple[str, ...]] | None = None
         self.setWindowTitle(self._translator.t("ai_feeds_title", site=site_name))
-        self.resize(900, 760)
+        self.resize(1000, 820)
         self._build_ui()
         self._reload_list(0 if self._forms else None)
 
@@ -128,7 +241,7 @@ class AiFeedsDialog(QDialog):
         splitter.addWidget(left)
         self._form_panel = self._build_form()
         splitter.addWidget(self._form_panel)
-        splitter.setSizes([220, 680])
+        splitter.setSizes([170, 830])   # a site has one or two connections; the form needs the room
         layout.addWidget(splitter, 1)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -160,16 +273,34 @@ class AiFeedsDialog(QDialog):
         self._delay.setSingleStep(100)
         self._delay.setSuffix(" ms")
         self._delay.setToolTip(self._translator.t("ai_delay_help"))
+        # The style sheet flattens the box but cannot draw its spin arrows, so they would fall
+        # back to bevelled native ones; flat buttons beside it match the rest of the dialog.
+        self._delay.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
+        delay = QHBoxLayout()
+        delay.addWidget(self._delay, 1)
+        for text, step in (("−", self._delay.stepDown), ("＋", self._delay.stepUp)):
+            button = QPushButton(text)
+            button.setFixedWidth(40)
+            button.clicked.connect(step)
+            delay.addWidget(button)
         form.addRow(self._translator.t("ai_host"), address)
-        form.addRow(self._translator.t("ai_delay"), self._delay)
-        box.addWidget(basic)
+        form.addRow(self._translator.t("ai_delay"), delay)
+        self._align = QComboBox()
+        self._align.addItem(self._translator.t("ai_align_ai_time"), ALIGN_AI_TIME)
+        self._align.addItem(self._translator.t("ai_align_received"), ALIGN_RECEIVED)
+        self._align.setToolTip(self._translator.t("ai_delay_help"))
+        form.addRow(self._translator.t("ai_align"), self._align)
 
         mapping = QGroupBox(self._translator.t("ai_camera_map"))
         mapping_box = QVBoxLayout(mapping)
-        self._table = QTableWidget(0, 2)
+        self._table = QTableWidget(0, 3)
         self._table.setHorizontalHeaderLabels([self._translator.t("ai_source_id"),
-                                               self._translator.t("ai_camera")])
-        self._table.horizontalHeader().setStretchLastSection(True)
+                                               self._translator.t("ai_camera"),
+                                               self._translator.t("ai_filter")])
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().hide()
         self._table.setMinimumHeight(140)   # header + four mappings without scrolling
         mapping_box.addWidget(self._table)
@@ -181,7 +312,6 @@ class AiFeedsDialog(QDialog):
             row_buttons.addWidget(button)
         row_buttons.addStretch(1)
         mapping_box.addLayout(row_buttons)
-        box.addWidget(mapping, 2)
 
         advanced = QGroupBox(self._translator.t("ai_advanced"))
         advanced_box = QVBoxLayout(advanced)
@@ -191,9 +321,60 @@ class AiFeedsDialog(QDialog):
         advanced_box.addWidget(advanced_help)
         self._advanced = QPlainTextEdit()
         self._advanced.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._advanced.textChanged.connect(self._refresh_tile_keys)
         advanced_box.addWidget(self._advanced)
+
+        tiles = QGroupBox(self._translator.t("ai_tile_rows"))
+        tiles_box = QVBoxLayout(tiles)
+        self._tile_all_sites = QCheckBox(self._translator.t("ai_tile_all_sites"))
+        self._tile_rows = _CodePicker(self._translator, self._translator.t("ai_tile_none"),
+                                      self._translator.t("ai_tile_help"), self._tile_all_sites)
+        tiles_box.addWidget(self._tile_rows)
+        # The address and the mapping are both a few short rows, so they share one row; the
+        # kinds get the full width and the message format takes what height is left.
+        top = QHBoxLayout()
+        top.addWidget(basic, 1)
+        top.addWidget(mapping, 1)
+        box.addLayout(top)
+        box.addWidget(tiles)
         box.addWidget(advanced, 1)
+        self._fields: dict[str, list[tuple[str, str]]] = {}
         return panel
+
+    def _refresh_tile_keys(self) -> None:
+        """The field choices follow the labels typed in the message format."""
+        fields = label_fields(self._advanced.toPlainText())
+        if fields is None:
+            return   # mid-edit, not valid JSON yet: keep what is offered
+        self._fields = fields
+        self._tile_rows.set_fields(fields)
+        for row in range(self._table.rowCount()):
+            _show_filter(self._table.cellWidget(row, 2), fields, self._translator)
+
+    def _edit_filter(self, button: QPushButton) -> None:
+        row = next(row for row in range(self._table.rowCount())
+                   if self._table.cellWidget(row, 2) is button)
+        camera = self._table.cellWidget(row, 1).currentText() or self._table.item(row, 0).text()
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._translator.t("ai_filter_title", camera=camera))
+        box = QVBoxLayout(dialog)
+        picker = _CodePicker(self._translator, self._translator.t("ai_filter_all"),
+                             self._translator.t("ai_filter_help"))
+        picker.set_fields(self._fields)
+        picker.set_choice(*(button.rule or ("", [])))
+        box.addWidget(picker)
+        buttons = QDialogButtonBox()
+        buttons.addButton(self._translator.t("ai_ok"), QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(self._translator.t("cancel"), QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        box.addWidget(buttons)
+        dialog.resize(420, 420)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        # Nothing ticked keeps every result: a filter that lets nothing through is never wanted.
+        button.rule = (picker.key(), picker.values()) if picker.key() and picker.values() else None
+        _show_filter(button, self._fields, self._translator)
 
     def _feed_label(self, host: str, port: str) -> str:
         return f"{host}:{port}" if host else self._translator.t("ai_new_feed")
@@ -218,22 +399,33 @@ class AiFeedsDialog(QDialog):
         self._host.setText(form.host)
         self._port.setText(form.port)
         self._delay.setValue(form.delay_ms)
+        self._align.setCurrentIndex(max(self._align.findData(form.align), 0))
         self._table.setRowCount(0)
         for source, camera in form.mapping:
             self._add_row(source, camera)
         self._advanced.setPlainText(form.advanced)
+        for row, (source, _camera) in enumerate(form.mapping):
+            self._table.cellWidget(row, 2).rule = form.filters.get(source)
+        self._refresh_tile_keys()
+        self._tile_rows.set_choice(form.tile_key, form.tile_values)
 
     def _store_current(self) -> None:
         if self._current is None:
             return
         rows = []
+        filters = {}
         for row in range(self._table.rowCount()):
             combo = self._table.cellWidget(row, 1)
-            rows.append((self._table.item(row, 0).text(),
-                         combo.currentText() if isinstance(combo, QComboBox) else ""))
+            source = self._table.item(row, 0).text()
+            rows.append((source, combo.currentText() if isinstance(combo, QComboBox) else ""))
+            if self._table.cellWidget(row, 2).rule:
+                filters[source.strip()] = self._table.cellWidget(row, 2).rule
+        tile_key = self._tile_rows.key()
         self._forms[self._current] = FeedForm(self._host.text().strip(), self._port.text().strip(),
                                               self._delay.value(), rows,
-                                              self._advanced.toPlainText())
+                                              self._advanced.toPlainText(), tile_key,
+                                              self._tile_rows.values() if tile_key else [],
+                                              self._align.currentData() or ALIGN_AI_TIME, filters)
 
     def _refresh_current_label(self) -> None:
         if self._current is not None:
@@ -251,6 +443,11 @@ class AiFeedsDialog(QDialog):
         combo.addItems(names)
         combo.setCurrentIndex(names.index(camera) if camera else -1)
         self._table.setCellWidget(row, 1, combo)
+        button = QPushButton()
+        button.rule = None
+        _show_filter(button, self._fields, self._translator)
+        button.clicked.connect(lambda _checked=False, b=button: self._edit_filter(b))
+        self._table.setCellWidget(row, 2, button)
 
     def _add_empty_row(self) -> None:
         """Preselect the first camera that no connection has claimed yet."""
@@ -280,6 +477,11 @@ class AiFeedsDialog(QDialog):
 
     def _accept(self) -> None:
         self._store_current()
+        if self._current is not None and self._tile_all_sites.isChecked():
+            chosen = self._forms[self._current]
+            for form in self._forms:
+                form.tile_key, form.tile_values = chosen.tile_key, list(chosen.tile_values)
+            self.tile_rows_for_all_sites = (chosen.tile_key, tuple(chosen.tile_values))
         try:
             self.result_feeds = feeds_from_forms(self._site_name, self._cameras, self._forms)
         except ValueError as error:
@@ -291,11 +493,12 @@ class AiFeedsDialog(QDialog):
 
 
 def edit_ai_feeds(parent: QWidget, translator: Translator, site_name: str,
-                  cameras: Sequence[Camera],
-                  feeds: Sequence[AiFeedConfig]) -> tuple[AiFeedConfig, ...] | None:
-    """None means cancelled; an empty tuple means every connection was removed."""
+                  cameras: Sequence[Camera], feeds: Sequence[AiFeedConfig],
+                  ) -> tuple[tuple[AiFeedConfig, ...], tuple[str, tuple[str, ...]] | None] | None:
+    """None means cancelled; an empty tuple of feeds means every connection was removed. The
+    second item is the (field, codes) under each tile to copy to every other site, if asked."""
     dialog = AiFeedsDialog(parent, translator, site_name, cameras, feeds)
     dialog.setModal(True)
-    if dialog.exec() != QDialog.DialogCode.Accepted:
+    if dialog.exec() != QDialog.DialogCode.Accepted or dialog.result_feeds is None:
         return None
-    return dialog.result_feeds
+    return dialog.result_feeds, dialog.tile_rows_for_all_sites

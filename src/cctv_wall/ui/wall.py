@@ -22,6 +22,7 @@ from cctv_wall.urls import build_url, redact, stream_from_direct_url
 FIRST_AUDIT_MS = 9000
 AUDIT_INTERVAL_MS = 5000
 PLAYBACK_CONFIRMATION_INTERVAL_MS = 250
+AI_FLASH_MS = 1000
 STATE_EXPLANATION_KEYS = {
     PlaybackState.OPENING: "connection_waiting",
     PlaybackState.ENDED: "no_video",
@@ -45,6 +46,31 @@ def _connection_start_interval(factory: PlayerFactory, tiles_per_page: int) -> i
     if tiles_per_page <= 9:
         return 350
     return 175
+
+
+class _AiLine(QLabel):
+    """One result line under a tile. Each result lights it in its camera's colour for a moment,
+    since consecutive results often differ only by a second. A plain switch, not a fade: remote
+    desktop drops the in-between frames of a fade, and a one-second hold survives a slow refresh."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("tileAi")
+        self._colour = ""
+        self._flash = QTimer(self)
+        self._flash.setSingleShot(True)
+        self._flash.setInterval(AI_FLASH_MS)
+        self._flash.timeout.connect(self._settle)
+
+    def show_result(self, text: str, colour: str) -> None:
+        self._colour = colour
+        self.setStyleSheet(f"border-left: 4px solid {colour}; background: {colour}; color: #0b0f14;")
+        self._flash.start()
+        self.setText(text)
+        self.setToolTip(text)
+
+    def _settle(self) -> None:
+        self.setStyleSheet(f"border-left: 4px solid {self._colour};")
 
 
 class VideoSurface(QWidget):
@@ -88,10 +114,11 @@ class VideoTile(QFrame):
         card.setContentsMargins(1, 1, 1, 1)
         card.addWidget(self.surface, 1)
         # A native video surface paints over Qt siblings, so text lives in its own strip.
-        self._ai = QLabel()
-        self._ai.setObjectName("tileAi")
-        self._ai.hide()
-        card.addWidget(self._ai)
+        # One line per kind of result the connection keeps (or a single line), in its order.
+        self._ai_box = QVBoxLayout()
+        self._ai_box.setSpacing(0)
+        card.addLayout(self._ai_box)
+        self._ai_lines: dict[int, _AiLine] = {}
         self._notice = QLabel()
         self._notice.setObjectName("tileNotice")
         self._notice.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -121,15 +148,20 @@ class VideoTile(QFrame):
     def set_camera(self, camera: Camera) -> None:
         """Show an edited camera in this card; a renamed camera's old AI result no longer applies."""
         if camera.label != self.camera.label:
-            self._ai.hide()
+            for line in self._ai_lines.values():
+                line.deleteLater()
+            self._ai_lines.clear()
         self.camera = camera
         self._set_tooltip()
 
-    def show_ai_event(self, text: str) -> None:
-        """Latest AI result for this camera; the full history lives in the side panel."""
-        self._ai.setText(text)
-        self._ai.setToolTip(text)
-        self._ai.show()
+    def show_ai_event(self, text: str, colour: str, line: int = 0) -> None:
+        """Latest AI result of one kind for this camera; the full history lives in the side
+        panel, where this camera's rows carry the same colour as the lines' left edge."""
+        ai_line = self._ai_lines.get(line)
+        if ai_line is None:
+            ai_line = self._ai_lines[line] = _AiLine()
+            self._ai_box.insertWidget(sorted(self._ai_lines).index(line), ai_line)
+        ai_line.show_result(text, colour)
 
     def _set_tooltip(self) -> None:
         # The image itself is the primary UI. Hover should identify the source only;
@@ -338,11 +370,11 @@ class WallView(QWidget):
             self._grid.addWidget(tile.view, index // columns, index % columns)
             tile.view.show()
 
-    def show_ai_event(self, camera_name: str, text: str) -> None:
+    def show_ai_event(self, camera_name: str, text: str, colour: str, line: int = 0) -> None:
         """Route an AI result to the visible tile of that camera; other pages ignore it."""
         for tile in self._tiles:
             if tile.view.camera.label == camera_name:
-                tile.view.show_ai_event(text)
+                tile.view.show_ai_event(text, colour, line)
 
     def stop(self) -> None:
         """Cancel queued starts before releasing visible players during page/site changes."""

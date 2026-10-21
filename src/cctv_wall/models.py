@@ -34,6 +34,9 @@ MIN_SIDEBAR_WIDTH = 160
 MAX_SIDEBAR_WIDTH = 800
 DEFAULT_LANGUAGE = "zh_TW"
 SUPPORTED_LANGUAGES = frozenset({"zh_TW", "en"})
+# "system" 跟隨 Windows 的深淺色設定。
+THEMES = ("system", "dark", "light")
+DEFAULT_THEME = "system"
 
 
 def _text(value: Any) -> str:
@@ -216,6 +219,7 @@ class Workspace:
     strict_sync: bool = False
     sidebar_width: int = DEFAULT_SIDEBAR_WIDTH
     sidebar_visible: bool = True
+    theme: str = DEFAULT_THEME
 
     def site(self, name: str) -> Site | None:
         return next((s for s in self.sites if s.name == name), None)
@@ -256,6 +260,7 @@ class Workspace:
         if duplicate:
             raise ValueError(f"duplicate site name {duplicate!r}")
         language = _text(raw.get("language")) or DEFAULT_LANGUAGE
+        theme = _text(raw.get("theme"))
         return cls(
             sites=tuple(built),
             last_site=_text(raw.get("last_site")),
@@ -267,6 +272,7 @@ class Workspace:
             strict_sync=_flag(raw.get("strict_sync", False)),
             sidebar_width=_sidebar_width(raw.get("sidebar_width")),
             sidebar_visible=_flag(raw.get("sidebar_visible", True)),
+            theme=theme if theme in THEMES else DEFAULT_THEME,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -279,6 +285,7 @@ class Workspace:
             "strict_sync": self.strict_sync,
             "sidebar_width": self.sidebar_width,
             "sidebar_visible": self.sidebar_visible,
+            "theme": self.theme,
             "sites": [s.as_dict() for s in self.sites],
         }
 
@@ -316,6 +323,16 @@ class Workspace:
 
     def with_sidebar(self, width: int, visible: bool) -> "Workspace":
         return replace(self, sidebar_width=_sidebar_width(width), sidebar_visible=visible)
+
+    def with_ai_tile_rows(self, tile_key: str, tile_values: tuple[str, ...]) -> "Workspace":
+        """Every site's AI connections keep the same kinds under each tile."""
+        return self.with_sites(
+            replace(site, ai_feeds=tuple(replace(feed, tile_key=tile_key, tile_values=tile_values)
+                                         for feed in site.ai_feeds))
+            for site in self.sites)
+
+    def with_theme(self, theme: str) -> "Workspace":
+        return replace(self, theme=theme if theme in THEMES else DEFAULT_THEME)
 
     def with_strict_sync(self, enabled: bool) -> "Workspace":
         """記住 RTSP 影像牆是否要使用支援 NTP 時間戳的播放後端。"""

@@ -75,11 +75,15 @@ def edit_site_ai_feeds(parent: QWidget, workspace: Workspace, translator: Transl
     source = workspace.site(site_name)
     if source is None:
         return None
-    feeds = edit_ai_feeds(parent, translator, source.name, source.cameras, source.ai_feeds)
-    if feeds is None or feeds == source.ai_feeds:
+    edited = edit_ai_feeds(parent, translator, source.name, source.cameras, source.ai_feeds)
+    if edited is None:
         return None
-    return workspace.with_sites(replace(site, ai_feeds=feeds) if site.name == source.name else site
-                                for site in workspace.sites)
+    feeds, tile_rows_for_all_sites = edited
+    updated = workspace.with_sites(replace(site, ai_feeds=feeds) if site.name == source.name else site
+                                   for site in workspace.sites)
+    if tile_rows_for_all_sites is not None:
+        updated = updated.with_ai_tile_rows(*tile_rows_for_all_sites)
+    return None if updated == workspace else updated
 
 
 def add_camera(parent: QWidget, workspace: Workspace, translator: Translator,

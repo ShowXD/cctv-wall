@@ -5,14 +5,16 @@ import queue
 import socket
 import threading
 from collections import deque
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
 
-from cctv_wall.ai_feed import (DEFAULT_DELAY_MS, STATUS_CONNECTED, AiEvent, AiFeedClient,
-                               AiFeedConfig, parse_line, parse_time, release_due)
+from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_DELAY_MS, STATUS_CONNECTED, AiEvent, AiFeedClient,
+                               AiFeedConfig, due_at, parse_line, parse_time, release_due)
 from cctv_wall.models import Site, Workspace
-from cctv_wall.ui.ai_feed_editor import FeedForm, config_from_form, feeds_from_forms
+from cctv_wall.ui.ai_feed_editor import FeedForm, config_from_form, feeds_from_forms, label_fields
+from cctv_wall.ui.ai_panel import short_camera_name, wrappable
 
 CONFIG = AiFeedConfig(host="127.0.0.1", port=9000)
 
@@ -105,16 +107,32 @@ class TestRealSample:
 
 
 class TestReleaseDue:
+    BY_ARRIVAL = AiFeedConfig(host="h", port=1, delay_ms=1500, align=ALIGN_RECEIVED)
+    BY_AI_TIME = AiFeedConfig(host="h", port=1, delay_ms=1500, align=ALIGN_AI_TIME)
+
     def test_events_wait_for_the_video_delay(self):
         pending = deque([AiEvent("A", "", 10.0), AiEvent("B", "", 10.5)])
-        assert release_due(pending, now=11.0, delay_ms=1500) == []
-        assert [e.camera for e in release_due(pending, now=11.5, delay_ms=1500)] == ["A"]
-        assert [e.camera for e in release_due(pending, now=12.0, delay_ms=1500)] == ["B"]
+        assert release_due(pending, now=11.0, config=self.BY_ARRIVAL) == []
+        assert [e.camera for e in release_due(pending, now=11.5, config=self.BY_ARRIVAL)] == ["A"]
+        assert [e.camera for e in release_due(pending, now=12.0, config=self.BY_ARRIVAL)] == ["B"]
         assert not pending
 
     def test_zero_delay_releases_immediately(self):
         pending = deque([AiEvent("A", "", 10.0)])
-        assert len(release_due(pending, now=10.0, delay_ms=0)) == 1
+        assert len(release_due(pending, now=10.0, config=replace(self.BY_ARRIVAL, delay_ms=0))) == 1
+
+    def test_aligned_to_ai_time_a_slow_ai_does_not_push_the_result_later(self):
+        # Analysed at 10.0, arrived 0.8 s later: shown at 10.0 + 1.5, not 10.8 + 1.5.
+        pending = deque([AiEvent("A", "", received_at=10.8, event_time=10.0)])
+        assert [e.camera for e in release_due(pending, now=11.5, config=self.BY_AI_TIME)] == ["A"]
+
+    def test_without_a_usable_ai_time_it_falls_back_to_arrival(self):
+        assert due_at(AiEvent("A", "", 10.8), self.BY_AI_TIME) == 12.3
+        assert due_at(AiEvent("A", "", 10.8, event_time=1.0), self.BY_AI_TIME) == 12.3   # clocks apart
+
+    def test_a_config_without_align_keeps_the_old_arrival_behaviour(self):
+        assert AiFeedConfig.from_raw({"host": "h", "port": 1}).align == ALIGN_RECEIVED
+        assert AiFeedConfig.from_raw(self.BY_AI_TIME.as_dict()) == self.BY_AI_TIME
 
 
 class TestConfig:
@@ -243,3 +261,87 @@ class TestDialogForm:
     def test_the_failing_connection_is_named(self):
         with pytest.raises(ValueError, match="#2 h2: ai_feed port"):
             feeds_from_forms("Lab", (), [FeedForm("h1", "1"), FeedForm("h2", "99999")])
+
+
+class TestPanelText:
+    def test_an_unnamed_camera_is_shown_by_its_host(self):
+        assert short_camera_name("rtsp://192.168.101.1/stream2") == "192.168.101.1"
+        assert short_camera_name("Gate") == "Gate"
+
+    def test_compact_json_gets_break_points_but_reads_the_same(self):
+        text = 'payload=[{"id":-1,"vdType":"機車"}]'
+        assert wrappable(text).replace("​", "") == text
+        assert wrappable(text).count("​") == text.count(",")
+
+
+class TestTileRows:
+    LABELS = {"eventType": {"1": "距離偵測", "4": "路口停等偵測"}}
+
+    def _config(self, **extra):
+        return AiFeedConfig.from_raw({"host": "h", "port": 1, "camera_key": "cameraName",
+                                      "labels": self.LABELS, **extra})
+
+    def test_each_ticked_kind_has_its_own_line_in_the_ticked_order(self):
+        config = self._config(tile_key="eventType", tile_values=[4, "1"])
+        assert [config.tile_row(kind) for kind in ("4", "1", "3")] == [0, 1, None]
+        assert AiFeedConfig.from_raw(config.as_dict()) == config
+
+    def test_without_ticked_kinds_every_result_shares_one_line(self):
+        assert self._config().tile_row("3") == 0
+        assert "tile_key" not in self._config().as_dict()
+
+    def test_kinds_need_the_field_they_are_kinds_of(self):
+        with pytest.raises(ValueError, match="tile_key"):
+            self._config(tile_values=["4"])
+
+    def test_the_kind_is_read_before_codes_become_text(self):
+        config = self._config(tile_key="eventType", tile_values=["4"])
+        event = parse_line('{"eventType":4,"cameraName":"A001"}', config, 0.0)
+        assert event.group == "4" and "路口停等偵測" in event.text
+
+    def test_the_dialog_offers_the_labelled_fields_and_keeps_the_choice(self):
+        assert label_fields('{"labels": {"eventType": {"1": "距離偵測"}}}') == {"eventType": [("1", "距離偵測")]}
+        assert label_fields('{"labels": ') is None   # half-typed: keep the old choices
+        form = FeedForm("h", "1", advanced='{"camera_key": "cameraName"}', tile_key="eventType",
+                        tile_values=["4"])
+        assert config_from_form(form).tile_values == ("4",)
+
+    def test_a_kind_inside_payload_takes_its_line_ticked_kinds_first(self):
+        config = self._config(tile_key="vdType", tile_values=["2", "5"])
+        event = parse_line('{"cameraName":"A001","payload":[{"vdType":3},{"vdType":5}]}', config, 0.0)
+        assert config.tile_row(event.group) == 1
+
+    def test_every_connection_of_every_site_gets_the_same_kinds(self):
+        feed = self._config()
+        workspace = Workspace.from_raw({"sites": [
+            {"name": "A", "ai_feeds": [feed.as_dict()]}, {"name": "B", "ai_feeds": [feed.as_dict()]}]})
+        updated = workspace.with_ai_tile_rows("eventType", ("4",))
+        assert {f.tile_values for site in updated.sites for f in site.ai_feeds} == {("4",)}
+
+
+class TestCameraFilters:
+    def _config(self):
+        return AiFeedConfig.from_raw({"host": "h", "port": 1, "camera_key": "cameraName",
+                                      "cameras": {"A001": "Gate", "A002": "Yard"},
+                                      "camera_filters": {"A001": {"vdType": [2, "5"]}}})
+
+    @pytest.mark.parametrize("line,shown", [
+        ('{"cameraName":"A001","payload":[{"vdType":3},{"vdType":5}]}', True),
+        ('{"cameraName":"A001","payload":[{"vdType":3}]}', False),
+        ('{"cameraName":"A001","eventType":2}', False),    # without the field: not shown
+        ('{"cameraName":"A002","payload":[{"vdType":3}]}', True),   # other cameras unaffected
+    ])
+    def test_only_the_ticked_values_of_that_camera_pass(self, line, shown):
+        assert (parse_line(line, self._config(), 0.0) is not None) == shown
+
+    def test_round_trip_and_dialog(self):
+        config = self._config()
+        assert AiFeedConfig.from_raw(config.as_dict()) == config
+        form = FeedForm.from_config(config)
+        assert form.filters == {"A001": ("vdType", ["2", "5"])}
+        assert config_from_form(form) == config
+
+    def test_a_filter_must_belong_to_a_mapped_camera(self):
+        with pytest.raises(ValueError, match="A009"):
+            AiFeedConfig.from_raw({"host": "h", "port": 1, "cameras": {"A001": "Gate"},
+                                   "camera_filters": {"A009": {"vdType": ["2"]}}})

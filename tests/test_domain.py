@@ -8,6 +8,7 @@ import pytest
 from cctv_wall import vendors
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.app import wall_needs_reload
+from cctv_wall.ui.camera_form import changed_fields
 from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, display_url,
                            redact, stream_from_direct_url)
 
@@ -228,3 +229,10 @@ class TestWallNeedsReload:
     def test_the_site_on_screen_was_removed_or_replaced(self, after_sites, last):
         before = self._workspace(Site("A"))
         assert wall_needs_reload(before, self._workspace(*after_sites, last=last), "A")
+
+
+class TestCameraDraft:
+    def test_only_fields_that_really_differ_count_as_changed(self):
+        camera = Camera(name="Gate", url="rtsp://10.0.0.1/s", user="admin", password="pw")
+        fields = {"name": " Gate ", "url": "rtsp://10.0.0.9/s", "user": "admin", "password": "new"}
+        assert changed_fields(camera, fields) == ["url", "password"]

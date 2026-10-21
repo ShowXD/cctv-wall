@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 192 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 212 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,12 +30,129 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **192 passed**（2026-10-19，`main`，`uv run --group dev pytest -q`） |
+| 測試 | **212 passed**（2026-10-21，`feature/menu-bar`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
 
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
+
+---
+
+## 2026-10-21：指定攝影機篩選、畫格下方設定套用至所有地點、exe 嚴格同步缺模組（分支 `feature/menu-bar`）
+
+**狀態：已實作、已驗證，未 commit；exe 由使用者自行重新打包。**
+- exe 開嚴格同步跳出 `No module named 'pkgutil'`：`gi` 以 data 複製（spec `excludes` 排除它的分析），
+  它 import 的標準庫靠別人順帶收進來；移除 yt-dlp 後 `pkgutil`、`optparse`、`asyncio` 都不在 PYZ
+  （`build/releases/CCTVWall-0.4.0-20261021-121044/cctv_wall/PYZ-00.toc` 確認）。`cctv_wall.spec` 的
+  `hiddenimports` 補上這三個（經使用者同意）。尚未重新打包驗證。
+- 「分類欄位」原本只看訊息最外層，選 `payload` 裡的 `vdType` 時畫格下方永遠不出現；改為任何層級都找
+  （`ai_feed._field_values`），payload 有多筆時勾選的種類優先。
+- 每條連線新增 `camera_filters`（`{"A001": {"vdType": ["2","5"]}}`）：該攝影機只留欄位值相符的結果，
+  畫格下方與側欄都套用，沒有該欄位的結果也不顯示（使用者選「兩個條件都要符合」「連側欄也過濾」）。
+  對話框「攝影機對照」多一欄「只顯示」，按鈕開小視窗選欄位與值。
+- 「畫格下方顯示」多一個勾選「按確定時套用至所有地點」：分類欄位與勾選複製到所有地點的所有連線
+  （`Workspace.with_ai_tile_rows`，由 `site_commands.edit_site_ai_feeds` 套用；設定視窗也改走它）。
+- 檢查：`uv run --group dev pytest -q` → 212 passed（新增 8 項）；`--dry-run` 正常；腳本驅動對話框截圖、
+  確認兩個地點都套用、篩選只存在 A001。
+- 對話框版面重排：左側連線清單縮為約 170px；「連線資訊」與「攝影機對照」並排，「畫格下方顯示」佔整列寬
+  （勾選項橫排換行、「套用至所有地點」移到分類欄位同一行）。顯示延遲的上下鈕原本是樣式表蓋不到的原生凸起按鈕
+  （QSS 樣式化後 Qt 不畫箭頭），改為隱藏並在旁放扁平 `−`／`＋`（每次 100 ms）；`QCheckBox` 勾選框沿用清單的方框樣式。
+  深色／淺色截圖確認。
+
+---
+
+## 2026-10-21：AI 結果依 AI 時間對齊（分支 `feature/menu-bar`）
+
+**狀態：已實作、已驗證，未 commit。** 現場回報 AI 結果與畫面時間不同步。
+- 原本一律「收到時間＋delay_ms」，AI 端處理時間的抖動直接變成誤差。新增每條連線的 `align`：
+  `ai_time`＝`event_time`＋delay（`ai_feed.due_at`），沒有時間或時鐘差 >2 s（`has_clock_skew`）時退回收到時間；
+  `received`＝舊行為。設定檔沒有 `align` 時為 `received`（現場已校準的延遲不會變）；對話框新增連線預設
+  `ai_time`。`release_due` 改收整個 config。對話框「連線資訊」多一列「對齊方式」。
+- 待確認：使用者尚未回覆 `created` 是畫面拍攝時間還是 AI 產生結果的時間（影響可對齊的精度，不影響做法）。
+  未做：側欄的延遲快速調整、嚴格同步模式下的自動對齊（方案 B）。
+- 順帶：清單勾選框統一為方框（已勾填滿主題色），先前補清單樣式後已勾項目的外框消失。
+- 檢查：`uv run --group dev pytest -q` → 204 passed（新增 3 項對齊測試）；對話框截圖確認選項與勾選框。
+
+---
+
+## 2026-10-21：外觀一致、統一捲軸、側欄多選攝影機（分支 `feature/menu-bar`）
+
+**狀態：已實作、已驗證，未 commit。**
+- 現場透過遠端桌面觀看時，深色主題下清單、表格、文字框與表單標籤仍是淺色：Qt 改用舊的 windowsvista
+  樣式，調色盤固定是淺色，而樣式表沒涵蓋這些元件。以 `QApplication.setStyle("windowsvista")` 重現。修正：
+  `theme.application_palette` 依主題設定整個調色盤（`__main__._apply_system_theme` 與樣式表一起套用），
+  樣式表補上 QListWidget／QTableWidget／QPlainTextEdit／QHeaderView。
+- 所有捲軸統一為細圓角、無箭頭（兩套主題各一組顏色）。
+- 側欄 Ctrl／Shift＋點攝影機：`_SiteTree` 改為 ExtendedSelection 但自己處理挑選（一般點擊仍單選），只限同一地點；
+  `MainWindow._picked_cameras` 非空時影像牆只顯示它們（`_displayed_cameras`）。兩台以上才成立，剩一台改為放大、
+  零台回到全部；Esc、地點列、一般點擊、換地點、重新載入都會清除，並把側欄選取改回地點列（`clear_picks`）。
+  多選時不允許拖曳排序。不存檔。
+- 檢查：`uv run --group dev pytest -q` → 201 passed；腳本：windowsvista 樣式下深色對話框與側欄截圖；
+  以真實滑鼠事件 Ctrl＋點 .1/.4 只剩兩格、加入／移除 .2、Esc 與地點列還原、還原後重新挑選，並截圖淺色側欄。
+
+---
+
+## 2026-10-21：AI 結果側欄可讀性（分支 `feature/menu-bar`）
+
+**狀態：已實作、已驗證，未 commit。** 使用者在現場（1N1，兩條連線 192.168.101.5/.6:1001）實際收到資料後回饋。
+- 由舊到新往下排（`addItem`、超過 500 筆從頂端刪）；只有原本停在最底才自動捲到底，捲動延到下一個
+  事件迴圈（換行後的列高要等下一次排版）。
+- 每筆兩行：`攝影機 · 時間` / 內容。未命名攝影機只顯示主機（`short_camera_name`）；內容在逗號後插入
+  零寬空格（`wrappable`）才能依寬度換行（緊湊 JSON 沒有空白可斷）。列表開 word wrap、關水平捲軸。
+- 每台攝影機一個顏色（`CAMERA_COLOURS`，依站內順序），側欄圓點與畫格結果條左緣同色，篩選選單也有圓點。
+- 連線狀態：側欄頂端每條連線前加綠／黃點（拿掉整段變黃的舊規則）；工具列按鈕改為 `● AI`，
+  `feed` 屬性 connected／partial／down 決定圓點顏色，提示顯示已連線條數。
+- 畫格下方依種類分行：`AiFeedConfig.tile_key`／`tile_values`（存在 `ai_feeds[]`），`AiEvent.group` 是 tile_key 欄位
+  換成文字前的值，`tile_row()` 決定第幾行（None＝這種不上畫格，只進側欄）。畫格的結果改為 `_AiLine` 一行一個、
+  各自閃燈。對話框新增「畫格下方顯示」（與攝影機對照並排），分類欄位選項來自訊息格式 JSON 的 `labels`
+  （`label_fields`；JSON 打到一半無效時保留原選項），勾選順序＝`labels` 的順序。都不勾＝舊行為。
+- 畫格結果條每收到一筆就以攝影機顏色亮起 1 秒（`AI_FLASH_MS`，計時器每筆重新計時）。使用者以遠端桌面觀看，
+  所以是直接切換顏色、不做淡出（遠端桌面會丟掉淡出的中間影格，也較耗頻寬）。
+- 檢查：`uv run --group dev pytest -q` → 201 passed（新增 `short_camera_name`、`wrappable`、分行 5 項測試）；腳本用本機
+  假 AI 端送真實格式資料，確認順序、換行、顏色對應、自動捲到底、狀態圓點，並截圖。
+  注意：腳本中以 `QTest.qWait` 等待時背景 socket 執行緒拿不到 GIL、看似連不上；改用 `processEvents`＋`sleep`。
+
+---
+
+## 2026-10-20：設定視窗暫存攝影機修改、淺色模式修正（分支 `feature/menu-bar`）
+
+**狀態：已實作、已驗證，未 commit。**
+- 設定視窗：攝影機欄位的修改改為草稿（`WorkspaceEditor._drafts`，以原攝影機物件的 id 為鍵，移動攝影機時跟著走；
+  刪除或被 inline 改名取代時捨棄）。切換選取時 `_stash_form` 暫存，清單以斜體標示；`儲存` 先以
+  `changed_fields`（`ui/camera_form.py`）列出變更（名稱顯示新舊值，網址與帳密只列欄位名）再一次 commit；
+  關閉時有草稿就問 儲存／捨棄／取消（`reject`）。地點與結構性操作仍立即存檔。
+- 網址欄貼上 `rtsp://帳號:密碼@IP:Port/...`，離開欄位或按 Enter 時立刻把帳密移到帳號／密碼欄（貼上的帳密取代
+  欄位舊值；存檔時 `Camera.from_raw`「欄位優先」的規則不變），網址欄下方加提示文字。不新增 IP／Port 欄位：
+  各廠牌路徑格式不同，拆欄位等於回到已被使用者移除的「主機＋廠牌樣板」。
+- 在攝影機欄位按 ↑／↓ 換上一台／下一台攝影機（`_step_camera`，跳過地點列、只走展開的列），游標留在同一欄；
+  `QShortcut` 的 context 是表單（WidgetWithChildrenShortcut），左右鍵仍在欄位內移動。
+- 修正既有問題：攝影機列任何資料變動（例如字型）都會發出 itemChanged 而被當成 inline 改名，未命名攝影機會被
+  寫入網址當名稱。改為名稱等於顯示文字時不處理，標記草稿時也暫停訊號。
+- 淺色模式：設定視窗清單選取列的文字原本沿用調色盤的白色反白文字，樣式表補上文字顏色。
+- `qt.qpa.window: ... Unable to set light window border.`：切換外觀時 Qt 要 DWM 替每個原生視窗換邊框色，
+  libvlc 需要的子視窗一律被拒（一格一行，實測一次 26 行），頂層標題列實際有變色。`__main__` 以
+  `QLoggingCategory.setFilterRules("qt.qpa.window.warning=false")` 關掉這個類別的警告。
+- 填滿按鈕改為自繪「四角向外」圖示（`_painted_icon`，與外觀按鈕共用灰色），Qt 內建標題列圖示是白色，
+  淺色模式看不到。
+- 檢查：`uv run --group dev pytest -q` → 194 passed（新增 `changed_fields` 測試）；`--dry-run` 正常；腳本驗證
+  切換不遺失、斜體標示、確認文字、一次寫入、關閉時取消／捨棄、淺色無邊框警告，並截圖。
+
+---
+
+## 2026-10-20：外觀主題切換（分支 `feature/menu-bar`）
+
+**狀態：已實作、已驗證，未 commit。**
+- 曾做出完整選單列（`QMenuBar`：檢視／設定／工具／說明），使用者看過後認為畫面會變矮，決定**不要選單列**，
+  已整個移除、頂部列維持原樣。之後若重提，不要再用會吃掉一列高度的選單列。
+- 保留外觀主題：頂部列語言下拉旁的 `◐` 按鈕（自繪半實心圓圖示，`◐` 字元在 Segoe UI 太小），點開選
+  跟隨系統／深色／淺色。`Workspace.theme`（system／dark／light，未知值退回 system），
+  `ui/theme.apply_theme` 用 `QStyleHints.setColorScheme()`，Windows 標題列一起變色；既有
+  `colorSchemeChanged` 換樣式表，不重建、不重連。啟動時 `__main__` 在讀完設定後套用一次。
+- 選單以主視窗為 parent（與右鍵選單同理，避免 native child 當 transient parent 的 Qt 警告）。
+- 檢查：`uv run --group dev pytest -q` → 193 passed（新增 theme 存讀測試）；`uv run cctv-wall --dry-run`
+  正常結束；腳本切換深淺色確認存檔、配色改變、播放器物件不變、切英文後選單文字與勾選正確、無 Qt 警告，
+  並截圖深淺兩種外觀。
 
 ---
 
@@ -368,7 +485,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **192 passed**。
+2. `uv run --group dev pytest -q` → 應為 **212 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

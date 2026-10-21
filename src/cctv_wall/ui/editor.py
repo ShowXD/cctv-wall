@@ -1,7 +1,9 @@
 """Settings dialog: sites and cameras.
 
-There is no draft: every action is written to the workspace at once through
-`on_change`. The wall reconnects once when the dialog closes, not on every edit.
+Adding, deleting, moving and renaming are written to the workspace at once through
+`on_change`. Edits to a camera's fields are drafts: switching to another camera keeps
+them, and Save applies every draft after listing what changed. The wall reconnects
+once when the dialog closes, not on every edit.
 """
 from __future__ import annotations
 
@@ -9,14 +11,15 @@ from dataclasses import replace
 from typing import Callable
 
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
-from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
-from cctv_wall.ui.camera_form import CameraForm
+from cctv_wall.ui.camera_form import FIELD_LABEL_KEYS, CameraForm, changed_fields
+from cctv_wall.ui.site_commands import edit_site_ai_feeds
 from cctv_wall.ui.flat_tree import FlatTree
 
 ROW_HEIGHT = 38
@@ -34,6 +37,9 @@ class WorkspaceEditor(QDialog):
         self._on_change = on_change
         self._site_index: int | None = None
         self._camera_index: int | None = None   # None with a site selected = a new camera
+        # id(original camera) -> (that camera, edited fields). Keyed by identity, so a draft
+        # follows its camera when cameras are moved; the tuple keeps the id from being reused.
+        self._drafts: dict[int, tuple[Camera, dict[str, str]]] = {}
         self.setWindowTitle(translator.t("settings_title"))
         self.resize(900, 560)
         self._build_ui()
@@ -72,6 +78,11 @@ class WorkspaceEditor(QDialog):
         body.addLayout(sites_column, 1)
         self._form = CameraForm(self._translator)
         self._form.submitted.connect(self._save_camera)
+        # Tab walks the fields; Up/Down walk the cameras, the cursor staying in the same field.
+        for key, step in (("Up", -1), ("Down", 1)):
+            shortcut = QShortcut(QKeySequence(key), self._form)
+            shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(lambda chosen=step: self._step_camera(chosen))
         form_column = QVBoxLayout()
         form_column.setSpacing(GROUP_SPACING)
         # Its own heading keeps the fields level with the site list.
@@ -105,7 +116,10 @@ class WorkspaceEditor(QDialog):
             site_item = self._tree_item(site.name, (site_index, None))
             self._tree.addTopLevelItem(site_item)
             for camera_index, camera in enumerate(site.cameras):
-                site_item.addChild(self._tree_item(camera.label, (site_index, camera_index)))
+                item = self._tree_item(camera.label, (site_index, camera_index))
+                if id(camera) in self._drafts:
+                    self._mark_draft(item, True)
+                site_item.addChild(item)
             site_item.setExpanded(site.name not in collapsed)
         self._tree.blockSignals(False)
         self._add_site_button.setVisible(not self._workspace.sites)
@@ -129,12 +143,59 @@ class WorkspaceEditor(QDialog):
         item = self._tree.currentItem()
         if item is None:
             return
+        self._stash_form()
         self._site_index, self._camera_index = item.data(0, Qt.ItemDataRole.UserRole)
         if self._camera_index is None:
             self._fill_form(None)
         else:
-            self._fill_form(self._site.cameras[self._camera_index])
+            camera = self._site.cameras[self._camera_index]
+            draft = self._drafts.get(id(camera))
+            if draft is None:
+                self._fill_form(camera)
+            else:
+                self._form.set_fields(draft[1])
         self._refresh_buttons()
+
+    def _step_camera(self, step: int) -> None:
+        """Next or previous camera row in the list, passing over site rows."""
+        item = self._tree.currentItem()
+        while item is not None:
+            item = self._tree.itemBelow(item) if step > 0 else self._tree.itemAbove(item)
+            if item is not None and item.parent() is not None:
+                self._tree.setCurrentItem(item)
+                return
+
+    def _selected_camera(self) -> Camera | None:
+        if self._site_index is None or self._camera_index is None:
+            return None
+        if not 0 <= self._site_index < len(self._workspace.sites):
+            return None
+        cameras = self._site.cameras
+        return cameras[self._camera_index] if 0 <= self._camera_index < len(cameras) else None
+
+    def _stash_form(self) -> None:
+        """Keep what was typed for the camera being left; unchanged fields drop the draft."""
+        camera = self._selected_camera()
+        if camera is None:
+            return
+        fields = self._form.fields()
+        if changed_fields(camera, fields):
+            self._drafts[id(camera)] = (camera, fields)
+        else:
+            self._drafts.pop(id(camera), None)
+        item = self._tree.topLevelItem(self._site_index)
+        item = item.child(self._camera_index) if item is not None else None
+        if item is not None:
+            self._mark_draft(item, id(camera) in self._drafts)
+
+    def _mark_draft(self, item: QTreeWidgetItem, unsaved: bool) -> None:
+        # Any data change emits itemChanged, which would otherwise be read as an inline rename.
+        blocked = self._tree.blockSignals(True)
+        font = item.font(0)
+        font.setItalic(unsaved)
+        item.setFont(0, font)
+        item.setToolTip(0, self._translator.t("unsaved_camera") if unsaved else "")
+        self._tree.blockSignals(blocked)
 
     def _show_tree_menu(self, position) -> None:
         item = self._tree.itemAt(position)
@@ -166,6 +227,7 @@ class WorkspaceEditor(QDialog):
     def _commit(self, build: Callable[[], Workspace],
                 select: tuple[int, int | None] | None = None) -> bool:
         """Validate, store and announce one change; a rejected change leaves everything as it was."""
+        self._stash_form()
         try:
             workspace = build()
         except ValueError as error:
@@ -175,6 +237,11 @@ class WorkspaceEditor(QDialog):
         self._form.show_error("")
         self._workspace = workspace
         self._on_change(workspace)
+        # Drafts of cameras that no longer exist (deleted, or replaced by a rename) go too.
+        alive = {id(camera) for site in workspace.sites for camera in site.cameras}
+        self._drafts = {key: draft for key, draft in self._drafts.items() if key in alive}
+        # The indices may point elsewhere in the new workspace: nothing to stash on reselect.
+        self._site_index = self._camera_index = None
         self._reload_tree()
         if select is not None:
             self._select(*select)
@@ -208,21 +275,77 @@ class WorkspaceEditor(QDialog):
         self._refresh_buttons()
 
     def _save_camera(self) -> None:
+        """Save: add the new camera being typed, or apply every camera draft after confirming."""
         if self._site_index is None:
             return
-        camera = self._form.read_camera()
-        if camera is None:
+        if self._camera_index is None and any(text.strip() for text in self._form.fields().values()):
+            camera = self._form.read_camera()
+            if camera is None:
+                return
+            site_index = self._site_index
+            cameras = [*self._site.cameras, camera]
+            if not self._commit(lambda: self._with_cameras(site_index, cameras),
+                                (site_index, len(cameras) - 1)):
+                return
+        self._stash_form()
+        if not self._drafts:
             return
-        site_index = self._site_index
-        cameras = list(self._site.cameras)
-        if self._camera_index is None:
-            cameras.append(camera)
-            index = len(cameras) - 1
-        else:
-            cameras[self._camera_index] = camera
-            index = self._camera_index
-        if self._commit(lambda: self._with_cameras(site_index, cameras), (site_index, index)):
-            self._fill_form(camera)   # shows the URL with any pasted credentials moved out
+        answer = QMessageBox.question(self, self._translator.t("save_changes"),
+                                      self._translator.t("save_changes_confirm", changes=self._changes_text()))
+        if answer == QMessageBox.StandardButton.Yes:
+            self._apply_drafts()
+
+    def _changes_text(self) -> str:
+        t = self._translator.t
+        lines = []
+        for camera, fields in self._drafts.values():
+            parts = []
+            for key in changed_fields(camera, fields):
+                label = t(FIELD_LABEL_KEYS[key])
+                # Only the name is shown in full: addresses and credentials stay off screen.
+                parts.append(t("changed_value", field=label, old=camera.name, new=fields[key].strip())
+                             if key == "name" else label)
+            lines.append(t("change_line", camera=camera.label, fields=t("list_separator").join(parts)))
+        return "\n".join(lines)
+
+    def _apply_drafts(self) -> bool:
+        """One commit for every draft, so a rejected camera leaves all of them unsaved."""
+        selected = self._site_index, self._camera_index
+        replacements: dict[int, Camera] = {}
+        for key, (camera, fields) in self._drafts.items():
+            try:
+                replacements[key] = Camera.from_raw(fields)
+            except ValueError as error:
+                self._form.show_error(f"{camera.label}: {error}")
+                return False
+
+        def build() -> Workspace:
+            return self._workspace.with_sites(
+                site.with_cameras(replacements.get(id(c), c) for c in site.cameras)
+                for site in self._workspace.sites)
+
+        drafts = self._drafts
+        self._drafts = {}
+        if not self._commit(build, selected if selected[0] is not None else None):
+            self._drafts = drafts
+            self._reload_tree()
+            return False
+        return True
+
+    def reject(self) -> None:
+        """Closing with unsaved camera edits asks first; Esc and the title bar both land here."""
+        self._stash_form()
+        if self._drafts:
+            answer = QMessageBox.question(
+                self, self._translator.t("save_changes"),
+                self._translator.t("unsaved_changes", changes=self._changes_text()),
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel)
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            if answer == QMessageBox.StandardButton.Save and not self._apply_drafts():
+                return
+        super().reject()
 
     def _delete_selected(self) -> None:
         if self._site_index is None:
@@ -262,17 +385,18 @@ class WorkspaceEditor(QDialog):
             self._commit(lambda: renamed, (site_index, None))
             return
         cameras = list(site.cameras)
+        if name == cameras[camera_index].label:
+            return   # the row shows the label; an unnamed camera must not take its URL as a name
         cameras[camera_index] = Camera.from_raw({**cameras[camera_index].as_dict(), "name": name})
         self._commit(lambda: self._with_cameras(site_index, cameras), (site_index, camera_index))
 
     def _edit_ai_feeds(self) -> None:
         if self._site_index is None:
             return
-        site, site_index = self._site, self._site_index
-        feeds = edit_ai_feeds(self, self._translator, site.name, site.cameras, site.ai_feeds)
-        if feeds is not None:
-            self._commit(lambda: self._with_site(site_index, replace(site, ai_feeds=feeds)),
-                         (site_index, None))
+        site_index = self._site_index
+        updated = edit_site_ai_feeds(self, self._workspace, self._translator, self._site.name)
+        if updated is not None:
+            self._commit(lambda: updated, (site_index, None))
 
     def _can_move(self, offset: int) -> bool:
         if self._site_index is None:
