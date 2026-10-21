@@ -150,12 +150,12 @@ def main(argv: list[str] | None = None) -> int:
     _apply_system_theme(application)
     application.styleHints().colorSchemeChanged.connect(
         lambda scheme: _apply_system_theme(application, scheme))
-    # Takes over from the exe's own splash image (see cctv_wall.spec), which is all that can
-    # show while a one-file build unpacks. Created before configuration is read, so slower
-    # disks still get visible feedback.
+    # The first thing on screen once a one-file build has unpacked. PyInstaller's own splash
+    # was tried for the unpacking itself: on Windows 10 it started later and drew an empty
+    # white window first, because it has to unpack and start Tcl/Tk before it can show.
+    # Created before configuration is read, so slower disks still get visible feedback.
     startup = StartupProgress()
     startup.show_at_center()
-    _close_bootloader_splash()
     startup.set_progress(20, "正在讀取設定…")
 
     try:
@@ -192,15 +192,6 @@ def main(argv: list[str] | None = None) -> int:
     window.show()
     startup.dismiss()
     return application.exec()
-
-
-def _close_bootloader_splash() -> None:
-    """pyi_splash exists only inside a build made with a splash; anywhere else there is none."""
-    try:
-        import pyi_splash
-    except ImportError:
-        return
-    pyi_splash.close()
 
 
 if __name__ == "__main__":
