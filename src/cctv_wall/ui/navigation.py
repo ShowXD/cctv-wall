@@ -23,19 +23,30 @@ class _SiteTree(FlatTree):
     """Sites with their cameras, reorderable by drag inside one level only."""
 
     def __init__(self, on_reorder: Callable[[], None],
-                 on_reselect: Callable[[QTreeWidgetItem], None]) -> None:
+                 on_reselect: Callable[[QTreeWidgetItem], None],
+                 on_pick: Callable[[QTreeWidgetItem], None]) -> None:
         super().__init__()
         self._on_reorder = on_reorder
         self._on_reselect = on_reselect
+        self._on_pick = on_pick
         self._pressed_current: QTreeWidgetItem | None = None
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDragDropOverwriteMode(False)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Extended only so that several picked cameras can show as selected at once; picking
+        # itself is handled in mousePressEvent, and a plain click still selects a single row.
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
     def mousePressEvent(self, event) -> None:
         item = self.itemAt(event.position().toPoint())
+        picking = event.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                       | Qt.KeyboardModifier.ShiftModifier)
+        if (picking and item is not None and item.parent() is not None
+                and event.button() == Qt.MouseButton.LeftButton):
+            self._on_pick(item)   # Ctrl/Shift+click a camera: add it to, or drop it from, the pick
+            event.accept()
+            return
         self._pressed_current = item if item is not None and item is self.currentItem() else None
         super().mousePressEvent(event)
 
@@ -52,8 +63,10 @@ class _SiteTree(FlatTree):
 
     def dropEvent(self, event) -> None:
         # A camera dropped onto another site would silently move it between locations;
-        # that belongs in the editor, where it can be reviewed before saving.
-        if not self._is_same_level_reorder(event.position().toPoint()):
+        # that belongs in the editor, where it can be reviewed before saving. Several picked
+        # cameras are a viewing choice, not something to drag.
+        if (len(self.selectedItems()) > 1
+                or not self._is_same_level_reorder(event.position().toPoint())):
             event.ignore()
             return
         super().dropEvent(event)
@@ -79,12 +92,14 @@ class SiteNavigation(QFrame):
                  on_site_action: Callable[[str, str], None], translator: Translator,
                  on_camera_selected: Callable[[str, Camera], None] | None = None,
                  on_reorder: Callable[[Workspace], None] | None = None,
-                 on_camera_action: Callable[[str, str, int], None] | None = None) -> None:
+                 on_camera_action: Callable[[str, str, int], None] | None = None,
+                 on_cameras_picked: Callable[[str, tuple[int, ...]], None] | None = None) -> None:
         super().__init__()
         self.setObjectName("siteNavigation")
         self.setMinimumWidth(160)
         self._on_site_selected = on_site_selected
         self._on_camera_action = on_camera_action
+        self._on_cameras_picked = on_cameras_picked
         self._translator = translator
         self._on_site_action = on_site_action
         self._on_camera_selected = on_camera_selected
@@ -110,7 +125,8 @@ class SiteNavigation(QFrame):
         self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section.addWidget(self._count)
         layout.addLayout(section)
-        self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item))
+        self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item),
+                                self._pick)
         self._sites.setObjectName("siteList")
         self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -163,6 +179,29 @@ class SiteNavigation(QFrame):
         camera = self._camera(site_name, camera_index)
         if camera is not None and self._on_camera_selected is not None:
             self._on_camera_selected(site_name, camera)
+
+    def _pick(self, item: QTreeWidgetItem) -> None:
+        """Toggle one camera in the set to watch; picks stay within one site."""
+        site_name, _index = _reference(item)
+        picked = [i for i in self._sites.selectedItems() if i.parent() is item.parent()]
+        others = [i for i in self._sites.selectedItems() if i not in picked]
+        for other in others:   # a site row, or cameras of another site
+            other.setSelected(False)
+        item.setSelected(item not in picked)
+        indices = tuple(sorted(_reference(i)[1] for i in self._sites.selectedItems()))
+        if self._on_cameras_picked is not None:
+            self._on_cameras_picked(site_name, indices)
+
+    def clear_picks(self) -> None:
+        """The wall shows the whole site again, so its row is the one selected; the next
+        Ctrl+click starts a new pick."""
+        current = self._sites.currentItem()
+        site_row = current.parent() or current if current is not None else None
+        blocked = self._sites.blockSignals(True)
+        self._sites.clearSelection()
+        if site_row is not None:
+            self._sites.setCurrentItem(site_row)
+        self._sites.blockSignals(blocked)
 
     def _camera(self, site_name: str, index: int) -> Camera | None:
         site = self._workspace.site(site_name)

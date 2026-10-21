@@ -30,6 +30,12 @@ CLOCK_SKEW_WARNING_SECONDS = 2.0
 # 數值大於這個值的 epoch 視為毫秒（1e11 秒已是西元 5138 年）。
 _EPOCH_MILLISECONDS_THRESHOLD = 1e11
 
+# 對齊方式：依 AI 時間＝AI 送來的時間＋延遲才顯示，不受 AI 端處理快慢影響（需兩端校時）；
+# 依收到時間＝收到後延遲才顯示。舊設定沒有這個欄位，照舊依收到時間，已校準的延遲不會跑掉。
+ALIGN_AI_TIME = "ai_time"
+ALIGN_RECEIVED = "received"
+ALIGN_MODES = (ALIGN_AI_TIME, ALIGN_RECEIVED)
+
 STATUS_CONNECTED = "connected"
 STATUS_RECONNECTING = "reconnecting"
 
@@ -58,6 +64,14 @@ class AiFeedConfig:
     # 欄位 → (代碼, 顯示文字)。任何層級的同名欄位都會換掉，所以 payload 裡的 vdType 也適用；
     # 換專案時改設定就好，不必改程式。
     labels: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
+    # 畫格下方依 tile_key 欄位分行：tile_values 裡每個值各留一行最新結果（依此順序）；
+    # 沒有 tile_values 時照舊只留最新一筆。
+    tile_key: str = ""
+    tile_values: tuple[str, ...] = ()
+    align: str = ALIGN_RECEIVED
+    # (AI 端識別值, 欄位, 值)：這台攝影機只留欄位值在其中的結果，畫格下方與側欄都套用；
+    # 欄位可在 payload 裡，任一筆相符即可，訊息裡沒有這個欄位也算不符。
+    camera_filters: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.host:
@@ -70,6 +84,16 @@ class AiFeedConfig:
             raise ValueError(f"ai_feed delay_ms must be 0-{MAX_DELAY_MS}, got {self.delay_ms}")
         if any(not source or not name for source, name in self.cameras):
             raise ValueError("ai_feed cameras: ids and camera names must not be empty")
+        if self.tile_values and not self.tile_key:
+            raise ValueError("ai_feed tile_values needs a tile_key")
+        sources = {source for source, _name in self.cameras}
+        for source, field_name, values in self.camera_filters:
+            if not field_name or not values:
+                raise ValueError(f"ai_feed camera_filters.{source}: needs a field and its values")
+            if self.cameras and source not in sources:
+                raise ValueError(f"ai_feed camera_filters: {source!r} is not in its cameras table")
+        if self.align not in ALIGN_MODES:
+            raise ValueError(f"ai_feed align must be one of {', '.join(ALIGN_MODES)}, got {self.align!r}")
 
     @property
     def address(self) -> str:
@@ -78,6 +102,12 @@ class AiFeedConfig:
     @property
     def camera_names(self) -> tuple[str, ...]:
         return tuple(name for _source, name in self.cameras)
+
+    def tile_row(self, group: str) -> int | None:
+        """Which line under the tile a result takes, or None when its kind is not kept there."""
+        if not self.tile_values:
+            return 0
+        return self.tile_values.index(group) if group in self.tile_values else None
 
     @classmethod
     def from_raw(cls, raw: Mapping[str, Any]) -> "AiFeedConfig":
@@ -107,6 +137,18 @@ class AiFeedConfig:
         skip_empty = raw.get("skip_empty") or []
         if not isinstance(skip_empty, list):
             raise ValueError("ai_feed skip_empty must be a list of field names")
+        tile_values = raw.get("tile_values") or []
+        if not isinstance(tile_values, list):
+            raise ValueError("ai_feed tile_values must be a list of values")
+        camera_filters = []
+        for source, rule in table("camera_filters").items():
+            if not isinstance(rule, Mapping) or len(rule) != 1:
+                raise ValueError(f"ai_feed camera_filters.{source} must be one field: [values]")
+            (field_name, values), = rule.items()
+            if not isinstance(values, list):
+                raise ValueError(f"ai_feed camera_filters.{source}.{field_name} must be a list")
+            camera_filters.append((str(source).strip(), str(field_name).strip(),
+                                   tuple(_scalar(value) for value in values)))
         labels = []
         for field_name, codes in table("labels").items():
             if not isinstance(codes, Mapping):
@@ -121,11 +163,16 @@ class AiFeedConfig:
                                  for source, name in table("cameras").items()),
                    skip=tuple(skip),
                    skip_empty=tuple(str(field_name) for field_name in skip_empty),
-                   labels=tuple(labels))
+                   labels=tuple(labels),
+                   tile_key=text("tile_key"),
+                   tile_values=tuple(_scalar(value) for value in tile_values),
+                   align=text("align", ALIGN_RECEIVED) or ALIGN_RECEIVED,
+                   camera_filters=tuple(camera_filters))
 
     def as_dict(self) -> dict[str, Any]:
         raw: dict[str, Any] = {"host": self.host, "port": self.port, "camera_key": self.camera_key,
-                               "time_key": self.time_key, "delay_ms": self.delay_ms}
+                               "time_key": self.time_key, "delay_ms": self.delay_ms,
+                               "align": self.align}
         if self.cameras:
             raw["cameras"] = dict(self.cameras)
         if self.skip:
@@ -137,6 +184,13 @@ class AiFeedConfig:
             raw["skip_empty"] = list(self.skip_empty)
         if self.labels:
             raw["labels"] = {field_name: dict(codes) for field_name, codes in self.labels}
+        if self.tile_key:
+            raw["tile_key"] = self.tile_key
+        if self.tile_values:
+            raw["tile_values"] = list(self.tile_values)
+        if self.camera_filters:
+            raw["camera_filters"] = {source: {field_name: list(values)}
+                                     for source, field_name, values in self.camera_filters}
         return raw
 
 
@@ -157,6 +211,7 @@ class AiEvent:
     text: str
     received_at: float                 # 本機 epoch 秒
     event_time: float | None = None    # AI 端 epoch 秒；沒送或看不懂時為 None
+    group: str = ""                    # tile_key 欄位的原始代碼（換成文字之前），決定畫格下方哪一行
 
     @property
     def clock_skew(self) -> float | None:
@@ -222,11 +277,28 @@ def parse_line(line: str, config: AiFeedConfig, received_at: float,
     if camera is None:
         _warn_once(config, warned, f"{config.camera_key}={source!r}, which is not in its cameras table")
         return None
+    for filtered, field_name, values in config.camera_filters:
+        if filtered == source and not set(_field_values(message, field_name)) & set(values):
+            return None
     event_time = parse_time(message.get(config.time_key)) if config.time_key else None
     rest = {k: v for k, v in message.items() if k not in (config.camera_key, config.time_key)}
     rest = _labelled(rest, {field_name: dict(codes) for field_name, codes in config.labels})
     text = "  ".join(f"{k}={_scalar(v)}" for k, v in rest.items())
-    return AiEvent(camera, text, received_at, event_time)
+    found = _field_values(message, config.tile_key) if config.tile_key else []
+    # payload 裡可能同時有好幾種；有勾選的種類優先，才會落到它那一行。
+    group = next((value for value in config.tile_values if value in found), found[0] if found else "")
+    return AiEvent(camera, text, received_at, event_time, group)
+
+
+def _field_values(value: Any, field_name: str) -> list[str]:
+    """任何層級的同名欄位的代碼，例如 payload 裡每筆的 vdType。"""
+    if isinstance(value, dict):
+        return [found for k, v in value.items()
+                for found in ([_scalar(v)] if k == field_name and not isinstance(v, (dict, list))
+                              else _field_values(v, field_name))]
+    if isinstance(value, list):
+        return [found for item in value for found in _field_values(item, field_name)]
+    return []
 
 
 def _labelled(value: Any, labels: dict[str, dict[str, str]]) -> Any:
@@ -240,10 +312,21 @@ def _labelled(value: Any, labels: dict[str, dict[str, str]]) -> Any:
     return value
 
 
-def release_due(pending: deque[AiEvent], now: float, delay_ms: int) -> list[AiEvent]:
-    """取出已等滿延遲的事件，讓文字與晚到的畫面同時出現。pending 依接收時間排序。"""
+def due_at(event: AiEvent, config: AiFeedConfig) -> float:
+    """這筆結果該顯示的時刻。依 AI 時間時，沒有時間或兩端時鐘相差太大（未校時）就退回收到時間，
+    否則一筆時間錯亂的結果會一直卡著或立刻冒出來。"""
+    anchor = event.received_at
+    if (config.align == ALIGN_AI_TIME and event.event_time is not None
+            and not event.has_clock_skew):
+        anchor = event.event_time
+    return anchor + config.delay_ms / 1000
+
+
+def release_due(pending: deque[AiEvent], now: float, config: AiFeedConfig) -> list[AiEvent]:
+    """取出已到顯示時刻的事件，讓文字與晚到的畫面同時出現。pending 依接收時間排序；
+    同一條連線的 AI 時間也是遞增的，所以只看隊首即可。"""
     due = []
-    while pending and pending[0].received_at + delay_ms / 1000 <= now:
+    while pending and due_at(pending[0], config) <= now:
         due.append(pending.popleft())
     return due
 

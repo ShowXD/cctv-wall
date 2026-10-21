@@ -1,7 +1,7 @@
 """The camera fields, shared by the settings window and the single-camera dialog."""
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Mapping
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -9,10 +9,16 @@ from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineE
 
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Camera, Workspace
+from cctv_wall.models import Camera, Workspace, _without_credentials
 
 CAMERA_FIELDS = ("name", "url", "user", "password")
 FIELD_LABEL_KEYS = {"name": "name", "url": "direct_url", "user": "username", "password": "password"}
+
+
+def changed_fields(camera: Camera, fields: Mapping[str, str]) -> list[str]:
+    """Fields that differ once stripped, the way Camera.from_raw will read them."""
+    return [key for key in CAMERA_FIELDS
+            if fields.get(key, "").strip() != getattr(camera, key).strip()]
 
 
 class CameraForm(QWidget):
@@ -33,24 +39,50 @@ class CameraForm(QWidget):
                 field.setEchoMode(QLineEdit.EchoMode.Password)
             if key == "url":
                 field.setPlaceholderText("rtsp://192.168.1.10:554/stream1")
+                # Connected before `submitted`: Enter must save the split fields, not the old ones.
+                field.returnPressed.connect(self._move_credentials)
+                field.editingFinished.connect(self._move_credentials)
             field.returnPressed.connect(self.submitted)
             self._fields[key] = field
             form.addRow(translator.t(FIELD_LABEL_KEYS[key]), field)
+            if key == "url":
+                hint = QLabel(translator.t("url_credentials_hint"))
+                hint.setObjectName("formHelp")
+                hint.setWordWrap(True)
+                form.addRow("", hint)
         box.addLayout(form)
         self._error = QLabel()
         self._error.setProperty("invalid", True)
         self._error.setWordWrap(True)
         box.addWidget(self._error)
 
+    def _move_credentials(self) -> None:
+        """Show a pasted rtsp://user:pass@host/... split at once. Credentials just pasted are the
+        ones meant, so they replace the fields (saving alone would keep the fields' old values)."""
+        url, user, password = _without_credentials(self._fields["url"].text().strip())
+        if not user and not password:
+            return
+        self._fields["url"].setText(url)
+        if user:
+            self._fields["user"].setText(user)
+        if password:
+            self._fields["password"].setText(password)
+
     def set_camera(self, camera: Camera | None) -> None:
+        self.set_fields({key: getattr(camera, key) for key in CAMERA_FIELDS} if camera else {})
+
+    def set_fields(self, values: Mapping[str, str]) -> None:
         self._error.clear()
         for key, field in self._fields.items():
-            field.setText(getattr(camera, key) if camera is not None else "")
+            field.setText(values.get(key, ""))
+
+    def fields(self) -> dict[str, str]:
+        return {key: field.text() for key, field in self._fields.items()}
 
     def read_camera(self) -> Camera | None:
         """The camera in the fields, or None after showing why it is not valid."""
         try:
-            return Camera.from_raw({key: field.text() for key, field in self._fields.items()})
+            return Camera.from_raw(self.fields())
         except ValueError as error:
             self.show_error(str(error))
             return None

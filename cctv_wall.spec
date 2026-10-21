@@ -151,7 +151,8 @@ analysis = Analysis(
     pathex=[str(PROJECT_ROOT / "src")],
     binaries=vlc_binaries + gstreamer_binaries,
     datas=vlc_datas + gstreamer_datas,
-    hiddenimports=["vlc"],
+    # `gi` is copied as data (see excludes), so its stdlib imports are not scanned.
+    hiddenimports=["vlc", "pkgutil", "optparse", "asyncio"],
     hookspath=[],
     runtime_hooks=[],
     # Nothing here draws plots or crunches arrays; excluding these keeps the build small.

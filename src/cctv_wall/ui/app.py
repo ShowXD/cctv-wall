@@ -8,9 +8,10 @@ from threading import Timer
 from typing import Callable
 
 from PySide6.QtCore import QSize, QTimer, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import (QActionGroup, QColor, QIcon, QKeySequence, QPainter, QPen, QPixmap,
+                           QShortcut)
 from PySide6.QtWidgets import (QComboBox, QSpinBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
-                               QMessageBox, QSplitter, QToolButton, QVBoxLayout,
+                               QMenu, QMessageBox, QSplitter, QToolButton, QVBoxLayout,
                                QStyle, QWidget)
 
 from cctv_wall import layout
@@ -25,6 +26,7 @@ from cctv_wall.ui.editor import open_editor
 from cctv_wall.ui.frameless import FramelessGrips
 from cctv_wall.ui.logs import show_log_dialog
 from cctv_wall.ui.navigation import SiteNavigation
+from cctv_wall.ui.theme import apply_theme
 from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import WallView
 from cctv_wall.urls import direct_url_with_stream
@@ -32,6 +34,7 @@ from cctv_wall.urls import direct_url_with_stream
 FactoryBuilder = Callable[[bool], PlayerFactory]
 WorkspaceSaver = Callable[[Workspace], None]
 NATIVE_SHUTDOWN_DEADLINE_SECONDS = 3.0
+ICON_COLOUR = QColor("#7f93ab")
 
 
 def wall_needs_reload(before: Workspace, after: Workspace, site_on_screen: str) -> bool:
@@ -58,6 +61,34 @@ CAMERA_COMMANDS = {
 }
 
 
+def _painted_icon(draw: Callable[[QPainter], None]) -> QIcon:
+    """A grey that reads on both themes; Qt's standard title-bar icons are white, and the ◐
+    character renders tiny in Segoe UI."""
+    pixmap = QPixmap(36, 36)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(ICON_COLOUR, 3))
+    painter.setBrush(ICON_COLOUR)
+    draw(painter)
+    painter.end()
+    return QIcon(pixmap)
+
+
+def _draw_theme(painter: QPainter) -> None:
+    """A half-filled circle."""
+    painter.drawPie(4, 4, 28, 28, 90 * 16, 180 * 16)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(4, 4, 28, 28)
+
+
+def _draw_fill(painter: QPainter) -> None:
+    """Four corners pointing outwards: video takes the whole window."""
+    for x, y, dx, dy in ((5, 5, 1, 1), (31, 5, -1, 1), (5, 31, 1, -1), (31, 31, -1, -1)):
+        painter.drawLine(x, y, x + 9 * dx, y)
+        painter.drawLine(x, y, x, y + 9 * dy)
+
+
 class MainWindow(QMainWindow):
     """Coordinates navigation, persistence, and player lifecycle without drawing video itself."""
 
@@ -74,6 +105,8 @@ class MainWindow(QMainWindow):
         self._factory_builder = build_factory
         self._factory = self._create_factory(workspace.strict_sync)
         self._focused_camera: Camera | None = None
+        # Ctrl+clicked cameras of the site on screen; empty = all of them.
+        self._picked_cameras: tuple[Camera, ...] = ()
         self._page_before_focus = 0
         self._is_shutdown = False
         self._view = ViewMode()
@@ -130,12 +163,14 @@ class MainWindow(QMainWindow):
         self._navigation = SiteNavigation(self._on_site_selected, self._open_settings,
                                           self._on_site_action, self._translator,
                                           self._on_camera_selected, self._on_sites_reordered,
-                                          self._on_camera_action)
+                                          self._on_camera_action, self._on_cameras_picked)
         splitter.addWidget(self._navigation)
         self._ai_panel = AiEventPanel(
             self._translator,
-            on_event_shown=lambda camera_name, text: self._wall.show_ai_event(camera_name, text),
-            on_camera_chosen=lambda camera: self._on_camera_selected(self._active_site_name, camera))
+            on_event_shown=lambda camera_name, text, colour, line: self._wall.show_ai_event(
+                camera_name, text, colour, line),
+            on_camera_chosen=lambda camera: self._on_camera_selected(self._active_site_name, camera),
+            on_connection_change=self._show_ai_connection)
         splitter.addWidget(self._monitor_panel())
         splitter.addWidget(self._ai_panel)
         splitter.setSizes([self._workspace.sidebar_width, 1180, 300])
@@ -194,6 +229,8 @@ class MainWindow(QMainWindow):
             self._exit_wall_fullscreen()
         elif self._focused_camera is not None:
             self._toggle_camera_focus(self._focused_camera)
+        elif self._picked_cameras:
+            self._clear_picked_cameras()
         elif self._view.filled:
             self._toggle_window_maximized()
 
@@ -297,7 +334,8 @@ class MainWindow(QMainWindow):
         self._language_box.setCurrentIndex(self._language_box.findData(self._translator.language))
         self._language_box.currentIndexChanged.connect(self._on_language_selected)
         layout_box.addWidget(self._language_box)
-        self._maximize_button = self._icon_button(QStyle.StandardPixmap.SP_TitleBarMaxButton,
+        layout_box.addWidget(self._theme_button())
+        self._maximize_button = self._icon_button(_painted_icon(_draw_fill),
                                                   self._translator.t("maximize"),
                                                   self._toggle_window_maximized)
         layout_box.addWidget(self._maximize_button)
@@ -308,8 +346,8 @@ class MainWindow(QMainWindow):
         self._sync_button.setChecked(self._workspace.strict_sync)
         self._refresh_sync_button()
         layout_box.addWidget(self._sync_button)
-        self._ai_button = self._button(self._translator.t("ai_short"), self._translator.t("ai_events"),
-                                       self._refresh_ai_panel)
+        self._ai_button = self._button(f"● {self._translator.t('ai_short')}",
+                                       self._translator.t("ai_events"), self._refresh_ai_panel)
         self._ai_button.setCheckable(True)
         self._ai_button.setChecked(True)
         self._ai_button.hide()
@@ -331,13 +369,37 @@ class MainWindow(QMainWindow):
         button.clicked.connect(action)
         return button
 
+    def _theme_button(self) -> QToolButton:
+        """Follow Windows, or force dark or light; only colours change, so no camera reconnects."""
+        button = QToolButton()
+        button.setObjectName("compactAction")
+        button.setIcon(_painted_icon(_draw_theme))
+        button.setIconSize(QSize(18, 18))
+        button.setToolTip(self._translator.t("appearance"))
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # Parented to the window, not the bar: libvlc makes the bar a native child, and a popup
+        # with a native child as its transient parent triggers a Qt warning.
+        menu = QMenu(self)
+        button.destroyed.connect(menu.deleteLater)   # a language change rebuilds the bar
+        group = QActionGroup(menu)
+        for theme, label in (("system", self._translator.t("theme_system")),
+                             ("dark", self._translator.t("theme_dark")),
+                             ("light", self._translator.t("theme_light"))):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(theme == self._workspace.theme)
+            action.triggered.connect(lambda _checked=False, chosen=theme: self._on_theme_selected(chosen))
+            group.addAction(action)
+        button.setMenu(menu)
+        return button
+
     @staticmethod
-    def _icon_button(icon: QStyle.StandardPixmap, tooltip: str,
+    def _icon_button(icon: QIcon | QStyle.StandardPixmap, tooltip: str,
                      action: Callable[..., None]) -> QToolButton:
         """Use Qt's monochrome icons instead of emoji, whose Windows metrics vary by font."""
         button = QToolButton()
         button.setObjectName("compactAction")
-        button.setIcon(button.style().standardIcon(icon))
+        button.setIcon(icon if isinstance(icon, QIcon) else button.style().standardIcon(icon))
         button.setIconSize(QSize(18, 18))
         button.setToolTip(tooltip)
         button.clicked.connect(action)
@@ -345,6 +407,7 @@ class MainWindow(QMainWindow):
 
     def _reload_sites(self) -> None:
         self._exit_camera_focus_if_needed()
+        self._picked_cameras = ()
         active = self._workspace.active_site
         self._active_site_name = active.name if active else ""
         self._navigation.set_workspace(self._workspace)
@@ -365,6 +428,15 @@ class MainWindow(QMainWindow):
         self._ai_button.setVisible(has_feed)
         self._ai_panel.setVisible(has_feed and self._view.chrome_visible
                                   and self._ai_button.isChecked())
+
+    def _show_ai_connection(self, connected: int, total: int) -> None:
+        """The AI button's dot is green only when every connection of the site is up."""
+        state = "connected" if total and connected == total else "partial" if connected else "down"
+        self._ai_button.setProperty("feed", state)
+        self._ai_button.style().unpolish(self._ai_button)
+        self._ai_button.style().polish(self._ai_button)
+        self._ai_button.setToolTip(self._translator.t("ai_connections_tip", connected=connected,
+                                                      total=total))
 
     def _refresh_status(self) -> None:
         total = len(self._displayed_cameras)
@@ -409,7 +481,9 @@ class MainWindow(QMainWindow):
             return
         self._exit_camera_focus_if_needed()
         if site_name == self._active_site_name:
+            self._clear_picked_cameras()   # the site row again: back to all of its cameras
             return
+        self._picked_cameras = ()
         self._active_site_name = site_name
         self._workspace = self._workspace.with_last_site(site_name)
         self._page = 0
@@ -425,6 +499,7 @@ class MainWindow(QMainWindow):
             self._toggle_camera_focus(camera)
             return
         self._exit_camera_focus_if_needed()
+        self._clear_picked_cameras()
         self._on_site_selected(site_name)
         cameras = self._cameras
         if camera not in cameras:
@@ -434,6 +509,30 @@ class MainWindow(QMainWindow):
             self._page = page
             self._show_current_page()
         self._toggle_camera_focus(camera)
+
+    def _on_cameras_picked(self, site_name: str, indices: tuple[int, ...]) -> None:
+        """Ctrl+clicked cameras: two or more fill the wall on their own, one is enlarged, none
+        puts the whole site back. Nothing is saved; another site or Esc ends it."""
+        self._exit_camera_focus_if_needed()
+        if site_name != self._active_site_name:
+            self._on_site_selected(site_name)
+        site = self._workspace.site(site_name)
+        cameras = tuple(site.cameras[i] for i in indices if 0 <= i < len(site.cameras)) if site else ()
+        if len(cameras) < 2:
+            self._clear_picked_cameras()
+            if cameras:   # turns to its page first when the site has more than one
+                self._on_camera_selected(site_name, cameras[0])
+            return
+        self._picked_cameras = cameras
+        self._page = 0
+        self._show_current_page()
+
+    def _clear_picked_cameras(self) -> None:
+        if self._picked_cameras:
+            self._picked_cameras = ()
+            self._navigation.clear_picks()
+            self._page = 0
+            self._show_current_page()
 
     def _on_sites_reordered(self, workspace: Workspace) -> None:
         """Persist a drag immediately; the wall only reloads when the order really changed."""
@@ -516,6 +615,13 @@ class MainWindow(QMainWindow):
         self._grips.relayout()
         self._apply_view_mode()
         self._reload_sites()
+
+    def _on_theme_selected(self, theme: str) -> None:
+        if theme == self._workspace.theme:
+            return
+        self._workspace = self._workspace.with_theme(theme)
+        self._persist()
+        apply_theme(self._workspace.theme)
 
     def _previous_page(self) -> None:
         self._page = max(0, self._page - 1)
@@ -601,6 +707,7 @@ class MainWindow(QMainWindow):
         """One edited camera reconnects alone, unless strict sync forces the whole page."""
         if self._focused_camera == old:
             self._focused_camera = new
+        self._picked_cameras = tuple(new if c == old else c for c in self._picked_cameras)
         self._navigation.set_workspace(self._workspace)
         if not self._wall.replace_camera(old, new):
             self._show_current_page()
@@ -619,7 +726,9 @@ class MainWindow(QMainWindow):
 
     @property
     def _displayed_cameras(self) -> tuple[Camera, ...]:
-        return (self._focused_camera,) if self._focused_camera is not None else self._cameras
+        if self._focused_camera is not None:
+            return (self._focused_camera,)
+        return self._picked_cameras or self._cameras
 
     def _toggle_camera_focus(self, camera: Camera) -> None:
         """Reflow an existing tile; focus must never tear down a healthy RTSP session.

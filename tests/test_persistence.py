@@ -58,6 +58,12 @@ class TestLoad:
         config.write_text(json.dumps({"language": "unknown"}), encoding="utf-8")
         assert load_workspace(config).language == "zh_TW"
 
+    def test_theme_is_loaded_and_unknown_values_follow_the_system(self, config):
+        config.write_text(json.dumps({"theme": "light"}), encoding="utf-8")
+        assert load_workspace(config).theme == "light"
+        config.write_text(json.dumps({"theme": "neon"}), encoding="utf-8")
+        assert load_workspace(config).theme == "system"
+
     def test_broken_json_names_the_line(self, config):
         config.write_text("{ not json", encoding="utf-8")
         with pytest.raises(WorkspaceError, match="line"):

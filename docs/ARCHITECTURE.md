@@ -21,7 +21,7 @@ src/cctv_wall/
   sync_probe.py   逐台攝影機探測 RTCP Sender Report 可用性
   ai_feed.py      AI 結果 TCP 來源：NDJSON 解析、攝影機對照／略過規則／代碼文字、顯示延遲、斷線重連（不碰 Qt）
   build.py        版本化單一 EXE 發行包建置（build cctv-wall）
-  ui/theme.py         全站 Qt 視覺主題，明／暗兩套（不含任何行為）
+  ui/theme.py         全站 Qt 視覺主題，明／暗兩套；apply_theme 向 Qt 指定深淺色（連標題列一起變）
   ui/flat_tree.py     兩層樹狀清單，在列內自繪縮排與展開箭頭（避開 Windows 11 樣式的選取破圖）；側欄與設定視窗共用
   ui/navigation.py    左側地點／攝影機樹狀導覽：只顯示、切換與排序，決策全部往上委派
   ui/view_mode.py     全螢幕／放大單格／填滿畫面等顯示狀態，不可變值，可脫離 Qt 測試
