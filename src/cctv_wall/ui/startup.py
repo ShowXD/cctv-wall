@@ -8,9 +8,9 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QProgressBar, QVBox
 class StartupProgress(QDialog):
     """Show meaningful startup stages after the frozen executable has unpacked.
 
-    PyInstaller owns the period before Python starts, so it can only show its own
-    native splash while a one-file executable is unpacked.  This widget takes over
-    as soon as Qt is available and keeps the user informed about application work.
+    Nothing can be shown while a one-file executable unpacks, because Python has not
+    started yet. This widget appears as soon as Qt is available and keeps the user
+    informed about application work.
     """
 
     def __init__(self) -> None:
@@ -52,7 +52,7 @@ class StartupProgress(QDialog):
         QApplication.processEvents()
 
     def show_at_center(self) -> None:
-        """Show above the native unpacking splash and centre on the active display."""
+        """Show on top and centre on the active display."""
         screen = self.screen() or QApplication.primaryScreen()
         if screen is not None:
             self.move(screen.availableGeometry().center() - self.rect().center())

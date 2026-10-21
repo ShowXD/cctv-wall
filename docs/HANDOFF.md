@@ -39,7 +39,17 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
-## 2026-10-21：對話框截斷、攝影機狀態浮在影像上、跨地點選取、exe 立即顯示啟動圖（分支 `refactor/cleanup`）
+## 2026-10-21：移除 exe 啟動圖（分支 `fix/remove-splash`）
+
+**狀態：已合併 main，尚未推送；exe 待使用者重新打包確認。**
+- 使用者在 Win10 打包實測：PyInstaller `Splash` 反而更慢出現，還先閃一個白色空框。原因是它必須先解壓並啟動 Tcl/Tk 才能畫圖，單一 exe 的主要等待（解壓約 211 MB）它並沒有縮短。
+- 使用者選擇移除啟動圖、維持單一 exe：spec 拿掉 `Splash`，刪除 `assets/startup_splash.png` 與 `__main__._close_bootloader_splash`，註解與 BUILD／ARCHITECTURE／README 說明改回「解壓完才有進度小畫面」，並記錄不要再加回來。
+- 若之後要更快啟動，可改發佈資料夾版（不必每次解壓），需改 `build.py`。
+- 檢查：`uv run --group dev pytest -q` → 220 passed；`--dry-run` 正常；尚未重新打包。
+
+---
+
+## 2026-10-21：對話框截斷、攝影機狀態浮在影像上、跨地點選取、exe 啟動圖（已移除，見上一節）
 
 **狀態：已合併 main，尚未推送；exe 由使用者自行打包驗證。**
 - AI 辨識連線對話框：

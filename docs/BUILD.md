@@ -210,11 +210,10 @@ FFmpeg DLL，因此 `gstlibav.dll` 的 `avdec_h264` 能作為 `d3d11h264dec` 的
   所以設定檔絕不能用 `__file__` 定位（`repository.default_config_path()` 有對應處理與測試）。
 - 打包後的 `--check` 若是被雙擊執行（沒有 console），報告會用對話框顯示；
   從命令列執行則印到 stdout。
-- 單檔版每次啟動會先解壓程式元件（約 211 MB），這段時間 Python 還沒開始執行。所以 spec 用
-  PyInstaller 的 `Splash` 讓 bootloader 一雙擊就顯示 `assets/startup_splash.png`（下方寫「正在載入…」），
-  解壓完由程式內的進度小畫面接手並關掉它（`__main__._close_bootloader_splash`）。
-  啟動圖需要 Tcl/Tk，exe 因此多出幾 MB；總啟動時間不變，只是馬上有回應。
-  換圖時保持約 480×270，bootloader 會照原尺寸顯示。
+- 單檔版每次啟動會先解壓程式元件（約 211 MB），這段時間 Python 還沒開始執行、不會有畫面，
+  解壓完才顯示進度小畫面。這是可攜性與啟動時間的取捨。
+  PyInstaller 的 `Splash` 試過：在 Win10 上它得先解壓並啟動 Tcl/Tk，反而更慢出現，還先閃一個白色空框，
+  已移除，不要再加回來。若現場需要更快啟動，改發佈資料夾版（不必每次解壓）。
 
 ---
 
