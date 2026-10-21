@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 217 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 220 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **217 passed**（2026-10-21，`refactor/cleanup`，`uv run --group dev pytest -q`） |
+| 測試 | **220 passed**（2026-10-21，`main`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -39,9 +39,40 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-21：對話框截斷、攝影機狀態浮在影像上、跨地點選取、exe 立即顯示啟動圖（分支 `refactor/cleanup`）
+
+**狀態：已合併 main，尚未推送；exe 由使用者自行打包驗證。**
+- AI 辨識連線對話框：
+  - 「畫格下方顯示」橫排的種類被截成「公車 …」。原因是自繪勾選框沒算進項目寬度，現在逐項設定 `sizeHint`。
+  - 攝影機對照的下拉選單改顯示 `short_camera_name`（未命名的顯示 IP），完整標籤放在 itemData 與 tooltip；「只顯示」欄依內容寬度。
+- 動畫：做過對話框淡入淡出、主視窗開關淡入淡出、側欄滑動，使用者看過後認為效果不明顯、沒必要，已全部移除（`ui/motion.py` 已刪）。
+- 攝影機狀態（頂部列長條圖按鈕，不存檔）：
+  - `Player.stats()` 讀 libvlc 的 `MediaStats`，`Player.show_overlay()` 用 libvlc 的 marquee 把文字畫在影像裡。原生影像視窗會蓋住 Qt 元件，浮在上面只能這樣做。
+  - `WallView` 只在開啟時每秒更新一次：解析度、每秒顯示幀數（兩次取樣相減）、累計丟幀、位元率、重連次數（`_Tile.reconnects`）。
+  - `performance.INSTANCE_ARGS` 拿掉 `--no-stats`，否則沒有統計可讀。
+  - GStreamer 嚴格同步回傳 None，不顯示。
+  - 已用真的 libvlc 播放本機圖片驗證：文字（含中文）畫在影像左上角，fps 與畫面一致。
+- 跨地點選取（使用者選「連上所有被選地點的 AI」）：
+  - 側欄 Ctrl＋點選不再限同一地點，`on_cameras_picked` 改傳 `(site, index)` 清單；只選同一個其他地點時仍會切到該地點。
+  - `MainWindow._picked_cameras` 存 `(site, Camera)`；`_watched_sites` 是影像牆涉及的地點，頂部列標題列出這些地點。
+  - `AiEventPanel.watch(sites)` 只增減有變的連線，已連上的不重連；事件以「地點＋標籤」對到 `Camera`，`WallView.show_ai_event` 改用 `Camera` 比對。兩個地點都有叫 Gate 的攝影機也不會送錯格。
+  - 多地點時側欄每筆前面標地點；工作區有變動時清掉選取（側欄樹重建後選取本來就不在了）。
+- exe 啟動：spec 加入 PyInstaller `Splash`（`assets/startup_splash.png`，由 `assets/splash.png` 縮成 480×270 並加上標題），`__main__` 在進度小畫面出現後呼叫 `pyi_splash.close()`。
+- 待使用者實測：
+  - 打包後雙擊是否立即出現啟動圖；
+  - 現場 RTSP 下狀態數字是否合理（例如 fps 與攝影機設定相近）。
+- 檢查：
+  - `uv run --group dev pytest -q` → 220 passed（新增 `tests/test_widgets.py`、狀態文字兩項）；
+  - `--dry-run` 正常；
+  - 腳本以 9N7 的格式截圖：7 種全部完整、攝影機欄顯示 IP；
+  - 跨地點腳本：兩個地點各一條 AI 連線，加選第二個地點時第一條沒有重連，結果各自進到自己地點的 Gate 格，按 Esc 回到原地點、只剩一條連線。
+  - 尚未實際打包。
+
+---
+
 ## 2026-10-21：全專案翻修（分支 `refactor/cleanup`）
 
-**狀態：已在 `refactor/cleanup` 分成三個 commit（結構、效能、註解與文件），尚未合併 main、未推送。** 目標：減輕低階電腦（常經遠端桌面觀看）的負擔、職責分明、註解只說明為什麼。
+**狀態：已合併 main（結構、效能、註解與文件三個 commit），尚未推送。** 目標：減輕低階電腦（常經遠端桌面觀看）的負擔、職責分明、註解只說明為什麼。
 行為不變；子碼流維持手動（使用者決定），文件原本就建議多格時把網址指向 `/stream2`。
 - 效能：
   - 畫格下方 AI 結果條同色連續亮著時不再重設樣式表、寬度不隨文字撐開畫格；
@@ -519,7 +550,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **217 passed**。
+2. `uv run --group dev pytest -q` → 應為 **220 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

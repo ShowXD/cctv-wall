@@ -47,6 +47,7 @@ tests/
   test_resources.py    CPU 用量換算
   test_i18n.py         翻譯目錄守門：兩語言鍵對齊、無死鍵、佔位符一致
   test_reconnect.py    斷線重連的退避節奏、AI 結果條不重複套用樣式（offscreen Qt）
+  test_widgets.py      AI 對話框橫排的種類不被截斷（offscreen Qt）
   test_sync.py         GStreamer 管線元件與凍結環境的 PATH 行為
   test_build.py        發行名稱清理與建置流程
   test_ai_feed.py      AI 結果解析、時間格式、延遲釋放、本機 loopback 連線與重連
@@ -99,7 +100,7 @@ cctv_wall.spec    PyInstaller 打包設定
 
 其他有感的細節：
 
-- 預設打包成單一 EXE，啟動時以兩階段進度提示解壓與載入狀態。
+- 預設打包成單一 EXE：解壓期間由 bootloader 顯示啟動圖，之後換成程式內的進度小畫面。
 - 不打包 `plugins.dat`，避免 libvlc 每次啟動都因快取失效而重掃並噴錯誤。
 
 還想更省：攝影機網址改用子碼流、每頁格數調小。
