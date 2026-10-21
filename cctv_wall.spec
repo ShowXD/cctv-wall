@@ -188,11 +188,26 @@ print(f"[cctv-wall] dropped {_before - len(analysis.binaries) - len(analysis.dat
 
 pyz = PYZ(analysis.pure)
 
+# While a one-file exe unpacks, Python is not running yet, so only the bootloader can show
+# anything. This image appears at once and closes when StartupProgress takes over.
+splash = Splash(
+    str(PROJECT_ROOT / "assets" / "startup_splash.png"),
+    binaries=analysis.binaries,
+    datas=analysis.datas,
+    text_pos=(24, 252),
+    text_size=10,
+    text_font="Microsoft JhengHei UI",
+    text_color="#8fa0b7",
+    text_default="正在載入…",
+)
+
 exe = EXE(
     pyz,
+    splash,
     analysis.scripts,
     analysis.binaries if ONEFILE else [],
     analysis.datas if ONEFILE else [],
+    splash.binaries if ONEFILE else [],
     name=APP_NAME,
     console=False,          # a GUI app: no console window on Windows
     debug=False,
@@ -206,5 +221,5 @@ exe = EXE(
 )
 
 if not ONEFILE:
-    COLLECT(exe, analysis.binaries, analysis.datas, name=APP_NAME,
+    COLLECT(exe, analysis.binaries, analysis.datas, splash.binaries, name=APP_NAME,
             strip=False, upx=False)
