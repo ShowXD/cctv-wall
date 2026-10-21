@@ -1,7 +1,7 @@
 """Reading and writing workspace.json — the app's memory between runs.
 
-The only module that touches the disk. Everything above it works on Workspace
-objects, so moving to SQLite or a server would mean replacing this file alone.
+The only module that reads or writes workspace.json. Everything above it works on
+Workspace objects, so moving to SQLite or a server would mean replacing this file alone.
 
 Saving is atomic (write a temp file, then replace) so a crash or a full disk
 cannot leave the user with a truncated camera list.

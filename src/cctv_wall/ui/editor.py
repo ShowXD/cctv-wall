@@ -92,7 +92,8 @@ class WorkspaceEditor(QDialog):
         body.addLayout(form_column, 2)
         layout.addLayout(body, 1)
 
-        # No Close button: every action is already saved, and the title bar closes the dialog.
+        # No Close button: the title bar and Esc close the dialog through reject(), which asks
+        # about unsaved camera drafts.
         bottom = QHBoxLayout()
         bottom.setSpacing(GROUP_SPACING)
         bottom.addStretch(1)
@@ -400,7 +401,7 @@ class WorkspaceEditor(QDialog):
         return 0 <= self._camera_index + offset < len(self._site.cameras)
 
     def _move_selected(self, offset: int) -> None:
-        """排序就是清單順序：地點順序決定側欄排列，攝影機順序決定影像牆格子順序。"""
+        """List order is the order: sites order the sidebar, cameras order the wall's tiles."""
         if not self._can_move(offset):
             return
         site_index = self._site_index

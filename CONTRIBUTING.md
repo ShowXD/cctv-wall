@@ -4,7 +4,7 @@
 
 ```bash
 uv sync                                 # 建立環境
-uv run --group dev pytest -q            # 應為 212 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q            # 應為 217 passed（不需要 VLC、不連網）
 uv run cctv-wall --dry-run              # 用假後端建整個 GUI 後立刻結束
 ```
 

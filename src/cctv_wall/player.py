@@ -1,8 +1,8 @@
-"""The only module that imports libvlc.
+"""The libvlc playback backend and the protocols every backend implements.
 
 The wall talks to the Player / PlayerFactory protocols, so the GUI can be built
-and tested on a machine without VLC (NullPlayerFactory), and swapping in another
-backend later would not touch a single line of UI code.
+and tested on a machine without VLC (NullPlayerFactory), and the strict-sync
+backend (gst_sync) slots in without touching UI code.
 
 One libvlc Instance is shared by every tile: each Instance costs memory and a
 plugin scan, which matters on the weak PCs this app targets.
@@ -23,9 +23,8 @@ class PlaybackError(RuntimeError):
 class PlaybackState(str, Enum):
     """What a player is actually doing, independent of any backend's own enum.
 
-    play() returning success only means libvlc accepted the URL. A camera that
-    answers and then sends nothing lands in ENDED, which is the case that used to
-    be reported as a healthy tile.
+    play() returning success only means the backend accepted the URL; a camera that
+    answers and then sends nothing lands in ENDED, not PLAYING.
     """
 
     IDLE = "idle"
@@ -41,7 +40,7 @@ _VLC_STATE_NAMES: dict[str, PlaybackState] = {
     "Opening": PlaybackState.OPENING,
     "Buffering": PlaybackState.OPENING,
     "Playing": PlaybackState.PLAYING,
-    "Paused": PlaybackState.PLAYING,
+    "Paused": PlaybackState.PLAYING,   # a live RTSP pause is transient, not an outage
     "Stopped": PlaybackState.IDLE,
     "Ended": PlaybackState.ENDED,
     "Error": PlaybackState.ERROR,
@@ -139,12 +138,14 @@ class VlcPlayerFactory:
 
         self._instance = vlc.Instance(*INSTANCE_ARGS)
         if self._instance is None:
-            raise PlaybackError("libvlc rejected the performance options")
+            raise PlaybackError("libvlc rejected the tuning options")
 
     def create(self) -> Player:
         return VlcPlayer(self._instance)
 
     def shutdown(self) -> None:
+        # libvlc reference-counts the Instance: players still being released on the wall's
+        # background thread keep it alive until they are done.
         self._instance.release()
 
 

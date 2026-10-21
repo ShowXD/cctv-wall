@@ -16,7 +16,6 @@ from cctv_wall.event_log import logger
 from cctv_wall.player import PlaybackError, PlaybackState
 from cctv_wall.urls import redact
 
-# A strict wall intentionally trades latency for the common presentation timestamp.
 # Every element play() builds, kept here so --check can prove a deployed exe will link
 # the pipeline instead of failing one tile at a time. test_sync.py keeps the two in step.
 REQUIRED_ELEMENTS = ("rtspsrc", "rtph264depay", "h264parse", "decodebin",
@@ -25,6 +24,8 @@ REQUIRED_ELEMENTS = ("rtspsrc", "rtph264depay", "h264parse", "decodebin",
 # libav decoder is deliberately bundled as a CPU fallback for Windows 10 and older
 # GPUs, where a D3D11 video sink may exist but no H.264 hardware decoder is exposed.
 H264_DECODER_ELEMENTS = ("d3d11h264dec", "avdec_h264")
+# A strict wall deliberately trades latency for one common presentation time: every tile
+# waits this long, so the slowest camera's frames still arrive before they are due.
 _NTP_SYNC_BUFFER_MS = 3_000
 _PRESENTATION_DELAY_NS = _NTP_SYNC_BUFFER_MS * 1_000_000
 _DLL_DIRECTORIES: list[object] = []

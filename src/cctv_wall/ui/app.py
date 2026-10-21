@@ -231,7 +231,7 @@ class MainWindow(QMainWindow):
         if bool(self.windowFlags() & Qt.WindowType.FramelessWindowHint) == frameless:
             return
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint, frameless)
-        self.show()
+        self.show()   # changing window flags hides the window
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -492,7 +492,7 @@ class MainWindow(QMainWindow):
             self._control_bar.set_sync(self._workspace.strict_sync)
 
     def _set_strict_sync(self, enabled: bool) -> bool:
-        """Atomically replace the wall backend after diagnostics approve its sources."""
+        """Swap the wall's backend; a missing GStreamer runtime leaves the current one in place."""
         if enabled == self._workspace.strict_sync:
             return True
         try:
@@ -542,7 +542,8 @@ class MainWindow(QMainWindow):
         self._apply_workspace_change(before)
 
     def _on_workspace_edited(self, workspace: Workspace) -> None:
-        """Each settings action is saved at once; the wall waits until the dialog closes."""
+        """Every committed change, Save of camera drafts included, is persisted at once; the wall
+        waits until the dialog closes."""
         self._workspace = workspace
         self._persist()
         self._navigation.set_workspace(workspace)

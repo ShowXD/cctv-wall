@@ -46,7 +46,6 @@ def page_count(total: int, per_page: int) -> int:
 
 
 def clamp_page(page: int, total: int, per_page: int) -> int:
-    """把頁碼夾在 0 到 page_count-1 之間。"""
     return max(0, min(page, page_count(total, per_page) - 1))
 
 

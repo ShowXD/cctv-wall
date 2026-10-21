@@ -1,4 +1,5 @@
-"""Dialog for a site's AI result connections: address, camera mapping, message format."""
+"""Dialog for a site's AI connections: address, delay and alignment, camera mapping with
+per-camera filters, the result lines under each tile, and the message format."""
 from __future__ import annotations
 
 import json
@@ -35,7 +36,7 @@ class FeedForm:
     advanced: str = ""
     tile_key: str = ""
     tile_values: list[str] = field(default_factory=list)
-    align: str = ALIGN_AI_TIME   # a connection set up from now on aligns to the AI's own time
+    align: str = ALIGN_AI_TIME   # new connections; a stored one without "align" keeps "received"
     filters: dict[str, tuple[str, list[str]]] = field(default_factory=dict)  # AI id -> (field, codes)
 
     @classmethod

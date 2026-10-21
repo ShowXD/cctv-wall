@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 212 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 217 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **212 passed**（2026-10-21，`feature/menu-bar`，`uv run --group dev pytest -q`） |
+| 測試 | **217 passed**（2026-10-21，`refactor/cleanup`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -39,9 +39,43 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-21：全專案翻修（分支 `refactor/cleanup`）
+
+**狀態：已在 `refactor/cleanup` 分成三個 commit（結構、效能、註解與文件），尚未合併 main、未推送。** 目標：減輕低階電腦（常經遠端桌面觀看）的負擔、職責分明、註解只說明為什麼。
+行為不變；子碼流維持手動（使用者決定），文件原本就建議多格時把網址指向 `/stream2`。
+- 效能：
+  - 畫格下方 AI 結果條同色連續亮著時不再重設樣式表、寬度不隨文字撐開畫格；
+  - AI 側欄釋放計時器閒置即停、每批只捲一次、顏色查表；
+  - `ai_feed._lookup_tables` 依連線快取對照表；
+  - 250 ms 播放確認最多 30 秒且路數有變才更新頂部列；
+  - 錯誤狀態條相同就不重套樣式；
+  - 事件紀錄視窗逐行附加；
+  - 頂部列看不到或最小化時不取樣 CPU。
+- 結構：
+  - 頂部列抽成 `ui/control_bar.py`（`app.py` 799 → 約 620 行）；`theme.painted_icon` 共用。
+  - `event_log` 不再依賴 Qt：以 `add_listener` 訂閱，`ui/logs.py` 用 signal 轉回 GUI 執行緒。
+  - `Player.play(url, window_id)`：VLC 參數由 `VlcPlayer` 自己套用；`PlayerFactory.synchronized` 進協定，取代 `getattr`。
+  - `Workspace.with_site` / `without_site` / 名稱不重複檢查移進 `__post_init__`，`site_commands` 與設定視窗共用。
+  - `_FilterButton` 取代在按鈕上掛屬性；`split_credentials` 公開。
+  - `AiEvent.camera` → `camera_label`；`on_solo` → `on_focus`；單一呼叫端的 Optional 回呼改必填。
+  - 刪除 `urls.display_url`。
+- 註解與文件：
+  - 修正過時說法（「唯一…」、已移除的效能檔、設定視窗草稿、`release_due` 的隊首取捨）；
+  - 每個檔案的註解統一一種語言；
+  - ARCHITECTURE 模組表與效能章節更新；
+  - `sync_probe_summary` 改為不暗示會強制檢查。
+- 注意：`ai_feed` 不能匯入 `event_log`（`event_log → repository → models → ai_feed` 循環），所以保留子 logger。
+- 檢查：
+  - `uv run --group dev pytest -q` → 217 passed（新增：Workspace 改名／刪除／重名、查表快取、結果條不重設樣式）；
+  - `--dry-run` 正常；
+  - 在乾淨直譯器確認 `ai_feed`、`gst_sync`、`event_log`、`player` 不載入 PySide6；
+  - 腳本送 600 筆 AI 結果：側欄維持 500 筆並停在最底、閒置後計時器停止，頂部列按鈕、填滿、語言切換正常。
+
+---
+
 ## 2026-10-21：指定攝影機篩選、畫格下方設定套用至所有地點、exe 嚴格同步缺模組（分支 `feature/menu-bar`）
 
-**狀態：已實作、已驗證，未 commit；exe 由使用者自行重新打包。**
+**狀態：已合併 main（`b7c1ca9`）並推上 origin；exe 由使用者自行重新打包。**
 - exe 開嚴格同步跳出 `No module named 'pkgutil'`：`gi` 以 data 複製（spec `excludes` 排除它的分析），
   它 import 的標準庫靠別人順帶收進來；移除 yt-dlp 後 `pkgutil`、`optparse`、`asyncio` 都不在 PYZ
   （`build/releases/CCTVWall-0.4.0-20261021-121044/cctv_wall/PYZ-00.toc` 確認）。`cctv_wall.spec` 的
@@ -64,7 +98,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-21：AI 結果依 AI 時間對齊（分支 `feature/menu-bar`）
 
-**狀態：已實作、已驗證，未 commit。** 現場回報 AI 結果與畫面時間不同步。
+**狀態：已合併 main（`b7c1ca9`）並推上 origin。** 現場回報 AI 結果與畫面時間不同步。
 - 原本一律「收到時間＋delay_ms」，AI 端處理時間的抖動直接變成誤差。新增每條連線的 `align`：
   `ai_time`＝`event_time`＋delay（`ai_feed.due_at`），沒有時間或時鐘差 >2 s（`has_clock_skew`）時退回收到時間；
   `received`＝舊行為。設定檔沒有 `align` 時為 `received`（現場已校準的延遲不會變）；對話框新增連線預設
@@ -78,7 +112,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-21：外觀一致、統一捲軸、側欄多選攝影機（分支 `feature/menu-bar`）
 
-**狀態：已實作、已驗證，未 commit。**
+**狀態：已合併 main（`b7c1ca9`）並推上 origin。**
 - 現場透過遠端桌面觀看時，深色主題下清單、表格、文字框與表單標籤仍是淺色：Qt 改用舊的 windowsvista
   樣式，調色盤固定是淺色，而樣式表沒涵蓋這些元件。以 `QApplication.setStyle("windowsvista")` 重現。修正：
   `theme.application_palette` 依主題設定整個調色盤（`__main__._apply_system_theme` 與樣式表一起套用），
@@ -95,7 +129,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-21：AI 結果側欄可讀性（分支 `feature/menu-bar`）
 
-**狀態：已實作、已驗證，未 commit。** 使用者在現場（1N1，兩條連線 192.168.101.5/.6:1001）實際收到資料後回饋。
+**狀態：已合併 main（`b7c1ca9`）並推上 origin。** 使用者在現場（1N1，兩條連線 192.168.101.5/.6:1001）實際收到資料後回饋。
 - 由舊到新往下排（`addItem`、超過 500 筆從頂端刪）；只有原本停在最底才自動捲到底，捲動延到下一個
   事件迴圈（換行後的列高要等下一次排版）。
 - 每筆兩行：`攝影機 · 時間` / 內容。未命名攝影機只顯示主機（`short_camera_name`）；內容在逗號後插入
@@ -117,7 +151,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-20：設定視窗暫存攝影機修改、淺色模式修正（分支 `feature/menu-bar`）
 
-**狀態：已實作、已驗證，未 commit。**
+**狀態：已合併 main（`b7c1ca9`）並推上 origin。**
 - 設定視窗：攝影機欄位的修改改為草稿（`WorkspaceEditor._drafts`，以原攝影機物件的 id 為鍵，移動攝影機時跟著走；
   刪除或被 inline 改名取代時捨棄）。切換選取時 `_stash_form` 暫存，清單以斜體標示；`儲存` 先以
   `changed_fields`（`ui/camera_form.py`）列出變更（名稱顯示新舊值，網址與帳密只列欄位名）再一次 commit；
@@ -142,7 +176,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-20：外觀主題切換（分支 `feature/menu-bar`）
 
-**狀態：已實作、已驗證，未 commit。**
+**狀態：已合併 main（`b7c1ca9`）並推上 origin。**
 - 曾做出完整選單列（`QMenuBar`：檢視／設定／工具／說明），使用者看過後認為畫面會變矮，決定**不要選單列**，
   已整個移除、頂部列維持原樣。之後若重提，不要再用會吃掉一列高度的選單列。
 - 保留外觀主題：頂部列語言下拉旁的 `◐` 按鈕（自繪半實心圓圖示，`◐` 字元在 Segoe UI 太小），點開選
@@ -485,7 +519,7 @@ exe 旁邊有 `cctv-wall.log`（與 `workspace.json` 同目錄）。曾有兩次
 ## 搬移專案後要確認的事
 
 1. `uv sync` 重建環境（`.venv` 不要跟著搬）。
-2. `uv run --group dev pytest -q` → 應為 **212 passed**。
+2. `uv run --group dev pytest -q` → 應為 **217 passed**。
    `tests/test_persistence.py` 有一項會檢查專案根目錄存在 `pyproject.toml`。
 3. `uv run cctv-wall --check` → `libvlc` 要有版本號、`strict sync` 要 available。
    原機 VLC 在 `C:\Tools\VLC`；換機器要確認 `find_vlc_dir()` 找得到，或用 `--vlc-dir` 指定。

@@ -1,8 +1,7 @@
-"""Turn a Camera into a playable URL.
+"""Camera URLs at play time: credentials go in only here, plus stream switching and redaction.
 
-The only module that knows how the pieces (host, port, credentials, vendor path)
-become a string. Separate from the model so adding a protocol never touches
-validation, and separate from the GUI so it stays testable as a plain function.
+Separate from the model so playback concerns never touch validation, and from the GUI
+so they stay testable as plain functions.
 """
 from __future__ import annotations
 

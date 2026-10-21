@@ -1,11 +1,10 @@
-"""Immutable domain model: Camera -> Site -> Workspace.
+"""不可變的領域模型：Camera → Site → Workspace。
 
-A site is a physical place (office, factory, home) holding several cameras;
-a workspace is every site plus what the app should remember between runs.
+地點是一個實際場所（辦公室、工廠、住家），底下有多台攝影機；工作區是所有地點，
+加上程式跨次啟動要記住的偏好設定。
 
-Invalid values are rejected in __post_init__, so every other module can trust
-whatever it is handed and skip defensive re-checks. Updates return new objects
-(`with_*` / dataclasses.replace) — nothing here is ever mutated in place.
+不合法的值在 __post_init__ 就被拒絕，其他模組拿到的物件都可信任、不必再檢查。
+更新一律回傳新物件（`with_*` / dataclasses.replace），這裡的東西從不原地修改。
 """
 from __future__ import annotations
 
@@ -24,9 +23,9 @@ MAX_PORT = 65535
 NAME_LIMIT = 48
 SCHEMA_VERSION = 1
 DEFAULT_TILES_PER_PAGE = 4
-# A fixed ceiling on concurrent decoders; more than this is unwatchable on one screen anyway.
+# 同時解碼的上限；再多在一個螢幕上也看不清楚。
 TILES_LIMIT = 36
-# Older files stored a named performance profile instead of a tile count.
+# 舊版設定檔存的是效能檔名稱，不是每頁格數。
 LEGACY_PROFILE_TILES = {"low_end": 4, "balanced": 9, "full": 16}
 DEFAULT_GEOMETRY = "1280x800"
 DEFAULT_SIDEBAR_WIDTH = 260
@@ -241,7 +240,7 @@ class Workspace:
         return tuple(s.name for s in self.sites)
 
     def unique_site_name(self, base: str) -> str:
-        """`base`, or `base 2`, `base 3`… — site names identify a place, so they must differ."""
+        """`base`，重複時依序試 `base 2`、`base 3`…，因為地點名稱不能重複。"""
         if self.site(base) is None:
             return base
         number = 2
@@ -337,7 +336,7 @@ class Workspace:
         return replace(self, sidebar_width=_sidebar_width(width), sidebar_visible=visible)
 
     def with_ai_tile_rows(self, tile_key: str, tile_values: tuple[str, ...]) -> "Workspace":
-        """Every site's AI connections keep the same kinds under each tile."""
+        """每個地點的每條 AI 連線，畫格下方都留同樣的種類。"""
         return self.with_sites(
             replace(site, ai_feeds=tuple(replace(feed, tile_key=tile_key, tile_values=tile_values)
                                          for feed in site.ai_feeds))

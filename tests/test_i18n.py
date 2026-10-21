@@ -17,7 +17,7 @@ from cctv_wall.ui.camera_form import FIELD_LABEL_KEYS
 SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src" / "cctv_wall"
 # A whole `t(...)` argument list — `_text(raw.get("x"))` also ends in `t(`, so require a
 # non-word character first. Matching the full list catches `t("a" if x else "b", n=1)`;
-# one level of nesting covers arguments like `t("k", profile=self._label(x))`.
+# one level of nesting covers arguments like `t("k", name=self._label(x))`.
 TRANSLATION_CALL = re.compile(r"(?<![\w_])t\(((?:[^()]|\([^()]*\))*)\)")
 KEY_LITERAL = re.compile(r"[\"']([a-z_0-9]+)[\"']")
 # Keys chosen at runtime from a PlaybackState, never written literally.

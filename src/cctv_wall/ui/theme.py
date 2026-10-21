@@ -184,8 +184,8 @@ def apply_theme(theme: str) -> None:
 
 def application_palette(dark: bool) -> QPalette:
     """Widgets the style sheet does not name still paint from the palette. Over remote desktop
-    Qt may fall back to an older Windows style whose palette is always light, which left lists
-    and text boxes white in the dark theme, so the palette is set to match the theme too."""
+    Qt may fall back to an older Windows style whose palette is always light, so the palette
+    has to match the theme as well."""
     window, text, base, button, highlight, highlighted, muted = (
         ("#10151f", "#edf2f8", "#182231", "#1d2a3b", "#285a85", "#ffffff", "#8b9bb0") if dark else
         ("#f4f7fb", "#172235", "#ffffff", "#eef3f8", "#cfe4f7", "#123b60", "#6b7c90"))
@@ -203,7 +203,7 @@ def application_palette(dark: bool) -> QPalette:
 
 
 def application_style(dark: bool) -> str:
-    """Return an entire palette so every custom component follows the system appearance."""
+    """The style sheet for the effective colour scheme, whether followed or forced."""
     return DARK_APPLICATION_STYLE if dark else LIGHT_APPLICATION_STYLE
 
 

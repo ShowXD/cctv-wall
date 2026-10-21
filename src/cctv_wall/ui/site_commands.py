@@ -1,9 +1,9 @@
-"""Site-level workspace commands: ask the operator, return a new Workspace.
+"""Site and camera commands from the sidebar: ask the operator, return a new Workspace.
 
-Every command has the same shape — (parent, workspace, translator, site_name) ->
+Site commands share one shape — (parent, workspace, translator, site_name) ->
 Workspace | None — so the window can dispatch them from a table instead of a
-branch per action. None means nothing should change: a cancelled dialog, a missing
-site, or a name that is already taken.
+branch per action; camera commands also take the camera's index. None means nothing
+should change: a cancelled dialog, a missing site, or a name that is already taken.
 
 The caller owns persistence and reloading, so none of this needs a video wall on
 screen to be exercised. Kept out of MainWindow because it touches neither.
@@ -65,7 +65,7 @@ def delete_site(parent: QWidget, workspace: Workspace, translator: Translator,
 
 def edit_site_ai_feeds(parent: QWidget, workspace: Workspace, translator: Translator,
                        site_name: str) -> Workspace | None:
-    """Edit the AI result connections of one site straight from the navigation."""
+    """Edit one site's AI connections; asked to, copy its tile rows to every site."""
     source = workspace.site(site_name)
     if source is None:
         return None

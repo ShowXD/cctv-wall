@@ -16,8 +16,6 @@ from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
 from cctv_wall.player import PlaybackError, PlaybackState, Player, PlayerFactory
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
-# Starting four RTSP sessions in the same event-loop turn can overwhelm a weak PC or a
-# camera/NVR with a small connection budget. Stagger starts but keep navigation instant.
 FIRST_AUDIT_MS = 9000
 AUDIT_INTERVAL_MS = 5000
 PLAYBACK_CONFIRMATION_INTERVAL_MS = 250
@@ -31,11 +29,12 @@ STATE_EXPLANATION_KEYS = {
     PlaybackState.ERROR: "vlc_error",
     PlaybackState.IDLE: "not_playing",
 }
-# 這些狀態代表這一格已經沒有影像，值得重連。OPENING 不算故障：低階電腦協商本來就慢，
-# 把它當成掉線會不斷打斷一個其實正在連線成功的來源。
+# States in which a tile has no picture and is worth reconnecting. OPENING is not one: a weak
+# PC negotiates slowly, and treating that as an outage would keep interrupting a connection
+# that is about to succeed.
 DEAD_STATES = frozenset({PlaybackState.ERROR, PlaybackState.ENDED, PlaybackState.IDLE})
-# 退避以「稽核次數」為單位，因此不需要額外計時器；一次等於 AUDIT_INTERVAL_MS。
-# 1→2→4→6 次 ×5 秒＝延遲 5→10→20→30 秒，上限 30 秒，避免壞掉的來源被反覆猛打。
+# Backoff counts audits, so it needs no timer of its own: 1, 2, 4, 6 audits of 5 s is a
+# 5, 10, 20, 30 s wait, capped so a broken source is not hammered.
 MAX_RECONNECT_BACKOFF_TICKS = 6
 
 
@@ -215,14 +214,14 @@ class VideoTile(QFrame):
 @dataclass(slots=True)
 class _Tile:
     view: VideoTile
-    log_label: str
+    log_label: str                # Camera.label, which never carries credentials
     player: Player | None = None
     last_logged_state: PlaybackState | None = None
-    backoff_ticks: int = 1        # 下次重連要等幾次稽核
-    ticks_until_retry: int = 0    # 還要等幾次稽核
+    backoff_ticks: int = 1        # audits to wait before the next reconnect
+    ticks_until_retry: int = 0    # audits left in the current wait
 
     def reset_backoff(self) -> None:
-        """影像恢復後把退避歸零，下一次掉線才會立刻重連。"""
+        """Once the picture is back, the next outage reconnects at once."""
         self.backoff_ticks = 1
         self.ticks_until_retry = 0
 
@@ -242,7 +241,7 @@ def _release_detached(tiles: Sequence[_Tile]) -> None:
 
 
 def _due_for_retry(tile: _Tile) -> bool:
-    """這次稽核該不該重連。不碰 Qt，所以退避節奏可以單獨測試。"""
+    """Whether this audit reconnects the tile. Free of Qt so the backoff can be tested alone."""
     if tile.ticks_until_retry > 0:
         tile.ticks_until_retry -= 1
         return False
@@ -340,14 +339,14 @@ class WallView(QWidget):
                          camera.label)
             self._tiles.append(tile)
             self._grid.addWidget(tile.view, index // columns, index % columns)
-            tile.view.surface.winId()
+            tile.view.surface.winId()   # Qt creates the native window lazily; play() needs it now
         self._pending_starts = list(self._tiles)
         self._start_next()
         self._playback_ticks_left = PLAYBACK_CONFIRMATION_TICKS
         self._reported_playing = -1
         self._playback_timer.start(PLAYBACK_CONFIRMATION_INTERVAL_MS)
-        # Delay the first health warning until every staggered connection has had time to
-        # negotiate. This avoids misleading "offline" reports on slower PCs.
+        # Hold the first health warning until every staggered connection has had time to
+        # negotiate, so a slow PC does not report cameras offline that are still connecting.
         self._audit_timer.start(FIRST_AUDIT_MS + self._start_interval_ms * len(visible))
 
     def focus_camera(self, camera: Camera) -> bool:
@@ -378,7 +377,7 @@ class WallView(QWidget):
                 tile.view.show_ai_event(text, colour, line)
 
     def stop(self) -> None:
-        """Cancel queued starts before releasing visible players during page/site changes."""
+        """Cancel queued starts, then release the visible players."""
         self._start_timer.stop()
         self._pending_starts.clear()
         self._audit_timer.stop()
@@ -397,7 +396,7 @@ class WallView(QWidget):
             Thread(target=_release_detached, args=(detached,), daemon=True).start()
 
     def _release(self, tile: _Tile) -> None:
-        """釋放一格的播放器；原生解碼器收尾失敗不能連帶影響其他格。"""
+        """Release one tile's player; a native teardown failure must not affect the other tiles."""
         if tile.player is None:
             return
         try:
@@ -408,7 +407,7 @@ class WallView(QWidget):
         tile.last_logged_state = None
 
     def _advance_reconnect(self, tile: _Tile) -> bool:
-        """依退避節奏重連掉線的攝影機，讓長期監看不需要人工按重新連線。"""
+        """Reconnect a dead tile on the backoff schedule, so long unattended watches recover alone."""
         if not _due_for_retry(tile):
             return False
         logger().info("camera=%s reconnecting", tile.log_label)
@@ -471,9 +470,9 @@ class WallView(QWidget):
     def audit_now(self) -> None:
         for tile in tuple(self._tiles):
             if tile in self._pending_starts:
-                continue  # 還沒輪到它連線，不是故障
+                continue  # not started yet, so not an outage
             if tile.player is None:
-                # 一開始就連不上的攝影機：保留原本的錯誤訊息，只安排重試。
+                # It never connected: keep the original error on screen, only schedule a retry.
                 self._advance_reconnect(tile)
                 continue
             state = tile.player.state()

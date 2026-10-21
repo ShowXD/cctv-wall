@@ -114,7 +114,7 @@ def _fail(message: str, status: int) -> int:
 
 
 def _apply_system_theme(application: QApplication, scheme: Qt.ColorScheme | None = None) -> None:
-    """Match the operating-system appearance without changing any playback behaviour."""
+    """Restyle for the effective colour scheme, followed or forced; playback is untouched."""
     chosen = scheme or application.styleHints().colorScheme()
     dark = chosen == Qt.ColorScheme.Dark
     application.setPalette(application_palette(dark))
