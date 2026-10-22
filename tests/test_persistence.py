@@ -194,3 +194,28 @@ class TestSidebarPreference:
     @pytest.mark.parametrize("raw,expected", [("wide", 260), (40, 160), (5000, 800)])
     def test_a_bad_width_falls_back_or_is_clamped(self, raw, expected):
         assert Workspace.from_raw({"sidebar_width": raw}).sidebar_width == expected
+
+
+class TestLayoutPreference:
+    """The layout the operator arranged comes back next time; a damaged entry is dropped, not fatal."""
+
+    def test_a_layout_survives_a_round_trip(self):
+        workspace = (Workspace().with_tile_layout("2x3", (0.6, 0.4), (0.2, 0.5, 0.3))
+                     .with_ai_panel(420, False).with_stats(True, "top_left"))
+        assert Workspace.from_raw(workspace.as_dict()) == workspace
+
+    def test_damaged_entries_are_dropped(self):
+        raw = {"tile_layouts": {"2x2": {"rows": [0.5], "columns": [0.5, 0.5]},   # wrong count
+                                "1x2": {"rows": [1], "columns": ["x", 1]},       # not a number
+                                "oops": {"rows": [1], "columns": [1]},
+                                "1x1": {"rows": [1], "columns": [1]}},
+               "stats_corner": "middle", "ai_panel_width": 9000}
+        workspace = Workspace.from_raw(raw)
+        assert workspace.tile_layouts == (("1x1", (1.0,), (1.0,)),)
+        assert (workspace.stats_corner, workspace.ai_panel_width) == ("bottom_right", 800)
+
+    def test_reset_returns_the_layout_but_keeps_the_window_where_it_is(self):
+        arranged = (Workspace(geometry="900x600+10+10").with_tile_layout("1x1", (1.0,), (1.0,))
+                    .with_sidebar(500, False).with_ai_panel(500, False).with_stats(True, "top_left"))
+        reset = arranged.with_default_layout()
+        assert reset == Workspace(geometry="900x600+10+10")

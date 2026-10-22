@@ -1,30 +1,35 @@
 """Settings dialog: sites and cameras.
 
-Adding, deleting, moving and renaming are written to the workspace at once through
-`on_change`. Edits to a camera's fields are drafts: switching to another camera keeps
-them, and Save applies every draft after listing what changed. The wall reconnects
-once when the dialog closes, not on every edit.
+Every change is held in a working copy until 套用 (apply) or 確認 (OK, apply and close);
+取消, Esc and the title bar discard it all. Changed camera fields are listed before they are
+applied. The wall reconnects once when the dialog closes, not on every edit.
 """
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Callable
+from typing import Callable, Sequence
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton,
-                               QTreeWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel,
+                               QMenu, QMessageBox, QPushButton, QStackedWidget, QTableWidget,
+                               QTableWidgetItem, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
-from cctv_wall.ui.camera_form import FIELD_LABEL_KEYS, CameraForm, changed_fields
-from cctv_wall.ui.site_commands import edit_site_ai_feeds
+from cctv_wall.ui.camera_form import (CAMERA_FIELDS, FIELD_LABEL_KEYS, CameraForm, changed_fields,
+                                      edit_camera)
 from cctv_wall.ui.flat_tree import FlatTree
+from cctv_wall.ui.site_commands import edit_site_ai_feeds
 
 ROW_HEIGHT = 38
 MARGIN = 16          # window edge and the gap between the two panes
 GROUP_SPACING = 8    # between buttons of one group
+PASSWORD_MASK = "●●●●"
+
+# (site index, camera index) — the camera index is None on a site row.
+Reference = tuple[int, "int | None"]
 
 
 class WorkspaceEditor(QDialog):
@@ -33,10 +38,12 @@ class WorkspaceEditor(QDialog):
                  initial_site_name: str | None = None) -> None:
         super().__init__(parent)
         self._translator = translator
-        self._workspace = workspace
+        self._workspace = workspace     # the working copy
+        self._applied = workspace       # what the rest of the app has
         self._on_change = on_change
+        # The one camera whose fields are in the form; None when a site or several rows are selected.
         self._site_index: int | None = None
-        self._camera_index: int | None = None   # None with a site selected = a new camera
+        self._camera_index: int | None = None
         # id(original camera) -> (that camera, edited fields). Keyed by identity, so a draft
         # follows its camera when cameras are moved; the tuple keeps the id from being reused.
         self._drafts: dict[int, tuple[Camera, dict[str, str]]] = {}
@@ -46,10 +53,9 @@ class WorkspaceEditor(QDialog):
         self._reload_tree()
         names = workspace.site_names
         if initial_site_name in names:
-            self._select(names.index(initial_site_name))
+            self._select([(names.index(initial_site_name), None)])
         elif names:
-            self._select(0)
-        self._refresh_buttons()
+            self._select([(0, None)])
 
     # ---- layout -------------------------------------------------------------------------
 
@@ -62,7 +68,9 @@ class WorkspaceEditor(QDialog):
         body = QHBoxLayout()
         body.setSpacing(MARGIN)
         self._tree = FlatTree()
-        self._tree.itemSelectionChanged.connect(self._on_tree_select)
+        # Shift+click selects a range and Ctrl+click toggles one row, like a file list.
+        self._tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._tree.itemSelectionChanged.connect(self._on_selection_changed)
         self._tree.itemChanged.connect(self._apply_inline_name)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_tree_menu)
@@ -71,39 +79,71 @@ class WorkspaceEditor(QDialog):
         self._add_site_button.clicked.connect(self._add_site)
         QVBoxLayout(self._tree.viewport()).addWidget(self._add_site_button, 0,
                                                      Qt.AlignmentFlag.AlignCenter)
+        for keys, action in ((QKeySequence.StandardKey.Delete, self._delete_selected),
+                             ("Alt+Up", lambda: self._move_selected(-1)),
+                             ("Alt+Down", lambda: self._move_selected(1)),
+                             ("Ctrl+N", self._new_camera)):
+            shortcut = QShortcut(QKeySequence(keys), self._tree)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(action)
         sites_column = QVBoxLayout()
         sites_column.setSpacing(GROUP_SPACING)
         sites_column.addWidget(QLabel(self._translator.t("site_list")))
         sites_column.addWidget(self._tree, 1)
+        hint = QLabel(self._translator.t("editor_hint"))
+        hint.setObjectName("formHelp")
+        hint.setWordWrap(True)
+        sites_column.addWidget(hint)
         body.addLayout(sites_column, 1)
+
+        self._heading = QLabel()
+        self._pages = QStackedWidget()
         self._form = CameraForm(self._translator)
-        self._form.submitted.connect(self._save_camera)
+        self._form.submitted.connect(self._apply)
         # Tab walks the fields; Up/Down walk the cameras, the cursor staying in the same field.
         for key, step in (("Up", -1), ("Down", 1)):
             shortcut = QShortcut(QKeySequence(key), self._form)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             shortcut.activated.connect(lambda chosen=step: self._step_camera(chosen))
-        form_column = QVBoxLayout()
-        form_column.setSpacing(GROUP_SPACING)
-        # Its own heading keeps the fields level with the site list.
-        form_column.addWidget(QLabel(self._translator.t("camera_details")))
-        form_column.addWidget(self._form)
-        form_column.addStretch(1)
-        body.addLayout(form_column, 2)
+        form_page = QWidget()
+        form_box = QVBoxLayout(form_page)
+        form_box.setContentsMargins(0, 0, 0, 0)
+        form_box.addWidget(self._form)
+        form_box.addStretch(1)
+        self._pages.addWidget(form_page)
+        self._site_table = QTableWidget(0, len(CAMERA_FIELDS))
+        self._site_table.setHorizontalHeaderLabels(
+            [self._translator.t(FIELD_LABEL_KEYS[key]) for key in CAMERA_FIELDS])
+        self._site_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._site_table.horizontalHeader().setStretchLastSection(True)
+        self._site_table.verticalHeader().hide()
+        self._site_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._site_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._site_table.cellDoubleClicked.connect(self._open_listed_camera)
+        self._pages.addWidget(self._site_table)
+        self._selection_note = QLabel()
+        self._selection_note.setObjectName("formHelp")
+        self._selection_note.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._selection_note.setWordWrap(True)
+        self._pages.addWidget(self._selection_note)
+        detail_column = QVBoxLayout()
+        detail_column.setSpacing(GROUP_SPACING)
+        # Its own heading keeps the details level with the site list.
+        detail_column.addWidget(self._heading)
+        detail_column.addWidget(self._pages, 1)
+        body.addLayout(detail_column, 2)
         layout.addLayout(body, 1)
 
-        # No Close button: the title bar and Esc close the dialog through reject(), which asks
-        # about unsaved camera drafts.
         bottom = QHBoxLayout()
         bottom.setSpacing(GROUP_SPACING)
         bottom.addStretch(1)
-        self._new_button = QPushButton(self._translator.t("add"))
-        self._new_button.clicked.connect(self._new_camera)
-        self._delete_button = QPushButton(self._translator.t("delete"))
-        self._delete_button.clicked.connect(self._delete_selected)
-        self._save_button = QPushButton(self._translator.t("save_camera"))
-        self._save_button.clicked.connect(self._save_camera)
-        for button in (self._new_button, self._delete_button, self._save_button):
+        for text, action in ((self._translator.t("confirm"), self._confirm),
+                             (self._translator.t("apply"), self._apply),
+                             (self._translator.t("cancel"), self.reject)):
+            button = QPushButton(text)
+            # Enter in a field already applies; a default button would act a second time.
+            button.setAutoDefault(False)
+            button.clicked.connect(action)
             bottom.addWidget(button)
         layout.addLayout(bottom)
 
@@ -126,36 +166,79 @@ class WorkspaceEditor(QDialog):
         self._add_site_button.setVisible(not self._workspace.sites)
 
     @staticmethod
-    def _tree_item(text: str, reference: tuple[int, int | None]) -> QTreeWidgetItem:
+    def _tree_item(text: str, reference: Reference) -> QTreeWidgetItem:
         item = QTreeWidgetItem([text])
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
         item.setSizeHint(0, QSize(0, ROW_HEIGHT))
         item.setData(0, Qt.ItemDataRole.UserRole, reference)
         return item
 
-    def _select(self, site_index: int, camera_index: int | None = None) -> None:
+    def _item(self, reference: Reference) -> QTreeWidgetItem | None:
+        site_index, camera_index = reference
         item = self._tree.topLevelItem(site_index)
         if item is not None and camera_index is not None:
             item = item.child(camera_index)
-        if item is not None:
-            self._tree.setCurrentItem(item)
+        return item
 
-    def _on_tree_select(self) -> None:
-        item = self._tree.currentItem()
-        if item is None:
+    def _select(self, references: Sequence[Reference]) -> None:
+        items = [item for item in map(self._item, references) if item is not None]
+        if not items:
+            self._on_selection_changed()
             return
+        blocked = self._tree.blockSignals(True)
+        self._tree.clearSelection()
+        self._tree.setCurrentItem(items[0])
+        for item in items:
+            item.setSelected(True)
+        self._tree.blockSignals(blocked)
+        self._on_selection_changed()
+
+    def _selected(self) -> list[Reference]:
+        """In list order, which is the order a moved block keeps."""
+        references = [item.data(0, Qt.ItemDataRole.UserRole) for item in self._tree.selectedItems()]
+        return sorted(references, key=lambda ref: (ref[0], -1 if ref[1] is None else ref[1]))
+
+    def _on_selection_changed(self) -> None:
         self._stash_form()
-        self._site_index, self._camera_index = item.data(0, Qt.ItemDataRole.UserRole)
-        if self._camera_index is None:
-            self._fill_form(None)
-        else:
-            camera = self._site.cameras[self._camera_index]
+        selected = self._selected()
+        self._site_index = self._camera_index = None
+        if len(selected) == 1 and selected[0][1] is not None:
+            self._site_index, self._camera_index = selected[0]
+            camera = self._workspace.sites[self._site_index].cameras[self._camera_index]
             draft = self._drafts.get(id(camera))
-            if draft is None:
-                self._fill_form(camera)
-            else:
-                self._form.set_fields(draft[1])
-        self._refresh_buttons()
+            self._form.set_fields(draft[1] if draft else
+                                  {key: getattr(camera, key) for key in CAMERA_FIELDS})
+            self._heading.setText(self._translator.t("camera_details"))
+            self._pages.setCurrentIndex(0)
+        elif len(selected) == 1:
+            self._show_site(selected[0][0])
+        else:
+            self._heading.setText(self._translator.t("selection"))
+            self._selection_note.setText(self._translator.t("selected_items", count=len(selected))
+                                         if selected else "")
+            self._pages.setCurrentIndex(2)
+
+    def _show_site(self, site_index: int) -> None:
+        """A site's own row lists its cameras; editing happens on a camera's row."""
+        site = self._workspace.sites[site_index]
+        self._heading.setText(self._translator.t("site_cameras", site=site.name,
+                                                 count=len(site.cameras)))
+        self._site_table.setRowCount(len(site.cameras))
+        for row, camera in enumerate(site.cameras):
+            draft = self._drafts.get(id(camera))
+            values = draft[1] if draft else {key: getattr(camera, key) for key in CAMERA_FIELDS}
+            for column, key in enumerate(CAMERA_FIELDS):
+                text = values[key].strip()
+                if key == "password" and text:
+                    text = PASSWORD_MASK   # the list is for checking, not for reading secrets
+                self._site_table.setItem(row, column, QTableWidgetItem(text))
+        self._site_table.setProperty("site_index", site_index)
+        self._pages.setCurrentIndex(1)
+
+    def _open_listed_camera(self, row: int, _column: int) -> None:
+        site_index = self._site_table.property("site_index")
+        self._tree.topLevelItem(site_index).setExpanded(True)
+        self._select([(site_index, row)])
 
     def _step_camera(self, step: int) -> None:
         """Next or previous camera row in the list, passing over site rows."""
@@ -163,7 +246,7 @@ class WorkspaceEditor(QDialog):
         while item is not None:
             item = self._tree.itemBelow(item) if step > 0 else self._tree.itemAbove(item)
             if item is not None and item.parent() is not None:
-                self._tree.setCurrentItem(item)
+                self._select([item.data(0, Qt.ItemDataRole.UserRole)])
                 return
 
     def _selected_camera(self) -> Camera | None:
@@ -171,7 +254,7 @@ class WorkspaceEditor(QDialog):
             return None
         if not 0 <= self._site_index < len(self._workspace.sites):
             return None
-        cameras = self._site.cameras
+        cameras = self._workspace.sites[self._site_index].cameras
         return cameras[self._camera_index] if 0 <= self._camera_index < len(cameras) else None
 
     def _stash_form(self) -> None:
@@ -184,8 +267,7 @@ class WorkspaceEditor(QDialog):
             self._drafts[id(camera)] = (camera, fields)
         else:
             self._drafts.pop(id(camera), None)
-        item = self._tree.topLevelItem(self._site_index)
-        item = item.child(self._camera_index) if item is not None else None
+        item = self._item((self._site_index, self._camera_index))
         if item is not None:
             self._mark_draft(item, id(camera) in self._drafts)
 
@@ -200,13 +282,14 @@ class WorkspaceEditor(QDialog):
 
     def _show_tree_menu(self, position) -> None:
         item = self._tree.itemAt(position)
-        if item is not None:
-            self._tree.setCurrentItem(item)
+        if item is not None and not item.isSelected():
+            self._select([item.data(0, Qt.ItemDataRole.UserRole)])
+        selected = self._selected()
         t = self._translator.t
         menu = QMenu(self)
         menu.setMinimumWidth(220)
         if item is not None:
-            if self._camera_index is None:
+            if len(selected) == 1 and selected[0][1] is None:
                 menu.addAction(t("add_camera"), self._new_camera)
                 menu.addAction(t("rename_site"), lambda: self._tree.editItem(item, 0))
                 menu.addAction(t("ai_feeds_action"), self._edit_ai_feeds)
@@ -218,16 +301,10 @@ class WorkspaceEditor(QDialog):
         menu.addAction(t("add_site"), self._add_site)
         menu.exec(self._tree.viewport().mapToGlobal(position))
 
-    # ---- saving -------------------------------------------------------------------------
+    # ---- changes to the working copy ------------------------------------------------------
 
-    @property
-    def _site(self) -> Site:
-        assert self._site_index is not None
-        return self._workspace.sites[self._site_index]
-
-    def _commit(self, build: Callable[[], Workspace],
-                select: tuple[int, int | None] | None = None) -> bool:
-        """Validate, store and announce one change; a rejected change leaves everything as it was."""
+    def _commit(self, build: Callable[[], Workspace], select: Sequence[Reference] = ()) -> bool:
+        """Change the working copy; a rejected change leaves everything as it was."""
         self._stash_form()
         try:
             workspace = build()
@@ -237,22 +314,19 @@ class WorkspaceEditor(QDialog):
             return False
         self._form.show_error("")
         self._workspace = workspace
-        self._on_change(workspace)
         # Drafts of cameras that no longer exist (deleted, or replaced by a rename) go too.
         alive = {id(camera) for site in workspace.sites for camera in site.cameras}
         self._drafts = {key: draft for key, draft in self._drafts.items() if key in alive}
         # The indices may point elsewhere in the new workspace: nothing to stash on reselect.
         self._site_index = self._camera_index = None
         self._reload_tree()
-        if select is not None:
-            self._select(*select)
-        self._refresh_buttons()
+        self._select(select)
         return True
 
     def _with_site(self, index: int, site: Site) -> Workspace:
         return self._workspace.with_site(self._workspace.sites[index].name, site)
 
-    def _with_cameras(self, site_index: int, cameras: list[Camera]) -> Workspace:
+    def _with_cameras(self, site_index: int, cameras: Sequence[Camera]) -> Workspace:
         site = self._workspace.sites[site_index]
         return self._with_site(site_index, site.with_cameras(cameras))
 
@@ -260,39 +334,109 @@ class WorkspaceEditor(QDialog):
         name = self._workspace.unique_site_name(self._translator.t("untitled_site"))
         index = len(self._workspace.sites)
         if self._commit(lambda: self._workspace.with_sites((*self._workspace.sites, Site(name))),
-                        (index, None)):
+                        [(index, None)]):
             self._tree.editItem(self._tree.topLevelItem(index), 0)
 
     def _new_camera(self) -> None:
-        """Clear the form for a new camera on the selected site; Save adds it."""
-        if self._site_index is None:
+        """Fill in one camera in a small window; it joins the selected site's list."""
+        selected = self._selected()
+        if not selected:
             return
-        self._select(self._site_index)
-        self._camera_index = None
-        self._fill_form(None)
-        self._form.focus_name()
-        self._refresh_buttons()
+        site_index = selected[0][0]
+        cameras = self._workspace.sites[site_index].cameras
+        updated = edit_camera(self, self._translator, None,
+                              lambda camera: self._with_cameras(site_index, (*cameras, camera)))
+        if updated is not None:
+            self._commit(lambda: updated, [(site_index, len(cameras))])
 
-    def _save_camera(self) -> None:
-        """Save: add the new camera being typed, or apply every camera draft after confirming."""
-        if self._site_index is None:
+    def _delete_selected(self) -> None:
+        """Delete every selected site and camera; nothing is final until it is applied."""
+        selected = self._selected()
+        if not selected:
             return
-        if self._camera_index is None and any(text.strip() for text in self._form.fields().values()):
-            camera = self._form.read_camera()
-            if camera is None:
-                return
-            site_index = self._site_index
-            cameras = [*self._site.cameras, camera]
-            if not self._commit(lambda: self._with_cameras(site_index, cameras),
-                                (site_index, len(cameras) - 1)):
-                return
-        self._stash_form()
-        if not self._drafts:
+        sites = {site for site, camera in selected if camera is None}
+        cameras = {ref for ref in selected if ref[1] is not None and ref[0] not in sites}
+
+        def build() -> Workspace:
+            kept = [site.with_cameras(camera for index, camera in enumerate(site.cameras)
+                                      if (site_index, index) not in cameras)
+                    for site_index, site in enumerate(self._workspace.sites)
+                    if site_index not in sites]
+            workspace = self._workspace.with_sites(kept)
+            active = workspace.active_site   # the remembered site, or the first one left
+            return workspace.with_last_site(active.name if active else "")
+
+        # Select the site the first deleted row was in, or the nearest one left.
+        left = len(self._workspace.sites) - len(sites)
+        first = min(selected[0][0] - sum(1 for site in sites if site < selected[0][0]), left - 1)
+        self._commit(build, [(first, None)] if left else [])
+
+    def _can_move(self, step: int) -> bool:
+        """A block moves when it is all sites, or all cameras of one site, and has room."""
+        selected = self._selected()
+        if not selected:
+            return False
+        if all(camera is None for _site, camera in selected):
+            indices, count = [site for site, _camera in selected], len(self._workspace.sites)
+        elif all(camera is not None for _site, camera in selected) and len({s for s, _c in selected}) == 1:
+            indices = [camera for _site, camera in selected]
+            count = len(self._workspace.sites[selected[0][0]].cameras)
+        else:
+            return False
+        return 0 <= min(indices) + step and max(indices) + step < count
+
+    def _move_selected(self, step: int) -> None:
+        """List order is the order: sites order the sidebar, cameras order the wall's tiles."""
+        if not self._can_move(step):
             return
-        answer = QMessageBox.question(self, self._translator.t("save_changes"),
-                                      self._translator.t("save_changes_confirm", changes=self._changes_text()))
-        if answer == QMessageBox.StandardButton.Yes:
-            self._apply_drafts()
+        selected = self._selected()
+        order = (lambda refs: refs) if step < 0 else reversed   # the leading edge moves first
+        if selected[0][1] is None:
+            sites = list(self._workspace.sites)
+            for site_index, _camera in order(selected):
+                sites[site_index], sites[site_index + step] = sites[site_index + step], sites[site_index]
+            self._commit(lambda: self._workspace.with_sites(sites),
+                         [(site + step, None) for site, _camera in selected])
+            return
+        site_index = selected[0][0]
+        cameras = list(self._workspace.sites[site_index].cameras)
+        for _site, index in order(selected):
+            cameras[index], cameras[index + step] = cameras[index + step], cameras[index]
+        self._commit(lambda: self._with_cameras(site_index, cameras),
+                     [(site_index, index + step) for _site, index in selected])
+
+    def _apply_inline_name(self, item: QTreeWidgetItem, _column: int) -> None:
+        """F2 or double-click rename; an empty or taken site name is not applied."""
+        site_index, camera_index = item.data(0, Qt.ItemDataRole.UserRole)
+        name = item.text(0).strip()
+        site = self._workspace.sites[site_index]
+        if camera_index is None:
+            if name == site.name:
+                return
+            if not name or self._workspace.site(name) is not None:
+                self._reload_tree()
+                self._select([(site_index, None)])
+                return
+            self._commit(lambda: self._with_site(site_index, replace(site, name=name)),
+                         [(site_index, None)])
+            return
+        cameras = list(site.cameras)
+        if name == cameras[camera_index].label:
+            return   # the row shows the label; an unnamed camera must not take its URL as a name
+        cameras[camera_index] = Camera.from_raw({**cameras[camera_index].as_dict(), "name": name})
+        self._commit(lambda: self._with_cameras(site_index, cameras), [(site_index, camera_index)])
+
+    def _edit_ai_feeds(self) -> None:
+        selected = self._selected()
+        if len(selected) != 1:
+            return
+        site_index = selected[0][0]
+        updated = edit_site_ai_feeds(self, self._workspace, self._translator,
+                                     self._workspace.sites[site_index].name)
+        if updated is not None:
+            self._commit(lambda: updated, [(site_index, None)])
+
+    # ---- applying -----------------------------------------------------------------------
 
     def _changes_text(self) -> str:
         t = self._translator.t
@@ -308,8 +452,7 @@ class WorkspaceEditor(QDialog):
         return "\n".join(lines)
 
     def _apply_drafts(self) -> bool:
-        """One commit for every draft, so a rejected camera leaves all of them unsaved."""
-        selected = self._site_index, self._camera_index
+        """One change for every draft, so a rejected camera leaves all of them unapplied."""
         replacements: dict[int, Camera] = {}
         for key, (camera, fields) in self._drafts.items():
             try:
@@ -323,108 +466,32 @@ class WorkspaceEditor(QDialog):
                 site.with_cameras(replacements.get(id(c), c) for c in site.cameras)
                 for site in self._workspace.sites)
 
+        selected = self._selected()
         drafts = self._drafts
         self._drafts = {}
-        if not self._commit(build, selected if selected[0] is not None else None):
+        if not self._commit(build, selected):
             self._drafts = drafts
             self._reload_tree()
             return False
         return True
 
-    def reject(self) -> None:
-        """Closing with unsaved camera edits asks first; Esc and the title bar both land here."""
+    def _apply(self) -> bool:
+        """套用: hand the working copy to the app; changed camera fields are listed first."""
         self._stash_form()
         if self._drafts:
-            answer = QMessageBox.question(
-                self, self._translator.t("save_changes"),
-                self._translator.t("unsaved_changes", changes=self._changes_text()),
-                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel)
-            if answer == QMessageBox.StandardButton.Cancel:
-                return
-            if answer == QMessageBox.StandardButton.Save and not self._apply_drafts():
-                return
-        super().reject()
+            answer = QMessageBox.question(self, self._translator.t("save_changes"),
+                                          self._translator.t("save_changes_confirm",
+                                                             changes=self._changes_text()))
+            if answer != QMessageBox.StandardButton.Yes or not self._apply_drafts():
+                return False
+        if self._workspace != self._applied:
+            self._on_change(self._workspace)
+            self._applied = self._workspace
+        return True
 
-    def _delete_selected(self) -> None:
-        if self._site_index is None:
-            return
-        site_index = self._site_index
-        if self._camera_index is None:
-            answer = QMessageBox.question(self, self._translator.t("delete_site"),
-                                          self._translator.t("delete_site_confirm", name=self._site.name))
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-            remaining = self._workspace.without_site(self._site.name)
-            self._site_index = self._camera_index = None
-            self._fill_form(None)
-            self._commit(lambda: remaining)
-            return
-        camera_index = self._camera_index
-        cameras = [c for i, c in enumerate(self._site.cameras) if i != camera_index]
-        self._commit(lambda: self._with_cameras(site_index, cameras), (site_index, None))
-
-    def _apply_inline_name(self, item: QTreeWidgetItem, _column: int) -> None:
-        """Double-click rename is saved at once; an empty or taken site name is not applied."""
-        site_index, camera_index = item.data(0, Qt.ItemDataRole.UserRole)
-        name = item.text(0).strip()
-        site = self._workspace.sites[site_index]
-        if camera_index is None:
-            if name == site.name:
-                return
-            if not name or self._workspace.site(name) is not None:
-                self._reload_tree()
-                self._select(site_index)
-                return
-            self._commit(lambda: self._with_site(site_index, replace(site, name=name)),
-                         (site_index, None))
-            return
-        cameras = list(site.cameras)
-        if name == cameras[camera_index].label:
-            return   # the row shows the label; an unnamed camera must not take its URL as a name
-        cameras[camera_index] = Camera.from_raw({**cameras[camera_index].as_dict(), "name": name})
-        self._commit(lambda: self._with_cameras(site_index, cameras), (site_index, camera_index))
-
-    def _edit_ai_feeds(self) -> None:
-        if self._site_index is None:
-            return
-        site_index = self._site_index
-        updated = edit_site_ai_feeds(self, self._workspace, self._translator, self._site.name)
-        if updated is not None:
-            self._commit(lambda: updated, (site_index, None))
-
-    def _can_move(self, offset: int) -> bool:
-        if self._site_index is None:
-            return False
-        if self._camera_index is None:
-            return 0 <= self._site_index + offset < len(self._workspace.sites)
-        return 0 <= self._camera_index + offset < len(self._site.cameras)
-
-    def _move_selected(self, offset: int) -> None:
-        """List order is the order: sites order the sidebar, cameras order the wall's tiles."""
-        if not self._can_move(offset):
-            return
-        site_index = self._site_index
-        if self._camera_index is None:
-            sites = list(self._workspace.sites)
-            target = site_index + offset
-            sites[site_index], sites[target] = sites[target], sites[site_index]
-            self._commit(lambda: self._workspace.with_sites(sites), (target, None))
-            return
-        cameras = list(self._site.cameras)
-        index, target = self._camera_index, self._camera_index + offset
-        cameras[index], cameras[target] = cameras[target], cameras[index]
-        self._commit(lambda: self._with_cameras(site_index, cameras), (site_index, target))
-
-    # ---- form ---------------------------------------------------------------------------
-
-    def _fill_form(self, camera: Camera | None) -> None:
-        self._form.set_camera(camera)
-
-    def _refresh_buttons(self) -> None:
-        has_site = self._site_index is not None
-        for widget in (self._new_button, self._save_button, self._delete_button, self._form):
-            widget.setEnabled(has_site)
+    def _confirm(self) -> None:
+        if self._apply():
+            self.accept()
 
 
 def open_editor(parent: QWidget, workspace: Workspace,

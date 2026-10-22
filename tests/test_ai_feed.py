@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pytest
 
-from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_DELAY_MS, STATUS_CONNECTED, AiEvent, AiFeedClient,
+from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_FRAME, ALIGN_RECEIVED, DEFAULT_DELAY_MS, STATUS_CONNECTED, AiEvent, AiFeedClient,
                                AiFeedConfig, _lookup_tables, due_at, parse_line, parse_time, release_due)
 from cctv_wall.models import Site, Workspace
 from cctv_wall.ui.ai_feed_editor import FeedForm, config_from_form, feeds_from_forms, label_fields
@@ -129,6 +129,26 @@ class TestReleaseDue:
     def test_without_a_usable_ai_time_it_falls_back_to_arrival(self):
         assert due_at(AiEvent("A", "", 10.8), self.BY_AI_TIME) == 12.3
         assert due_at(AiEvent("A", "", 10.8, event_time=1.0), self.BY_AI_TIME) == 12.3   # clocks apart
+
+    BY_FRAME = AiFeedConfig(host="h", port=1, delay_ms=1500, align=ALIGN_FRAME)
+
+    def test_by_frame_time_it_shows_when_the_picture_reaches_the_ai_time(self):
+        # The picture of A trails capture by 6 s, B's by 2 s; delay_ms plays no part.
+        lags = {"A": 6.0, "B": 2.0}
+        pending = deque([AiEvent("A", "", received_at=10.8, event_time=10.0),
+                         AiEvent("B", "", received_at=10.9, event_time=10.0)])
+        assert release_due(pending, now=15.9, config=self.BY_FRAME, frame_lag=lags.get) == []
+        assert [e.camera_label for e in release_due(pending, 16.0, self.BY_FRAME, lags.get)] == ["A", "B"]
+
+    def test_by_frame_time_without_a_usable_frame_time_it_shows_on_arrival(self):
+        assert due_at(AiEvent("A", "", 10.0, event_time=9.0), self.BY_FRAME) == 10.0   # no RTCP report yet
+        assert due_at(AiEvent("A", "", 10.0), self.BY_FRAME, frame_lag=6.0) == 10.0    # no AI time
+        # The AI clock runs an hour ahead of the camera: show it rather than wait an hour.
+        assert due_at(AiEvent("A", "", 10.0, event_time=3610.0), self.BY_FRAME, frame_lag=6.0) == 10.0
+
+    def test_the_manual_modes_ignore_the_frame_time(self):
+        assert due_at(AiEvent("A", "", 10.0, event_time=9.0), self.BY_AI_TIME, frame_lag=6.0) == 10.5
+        assert due_at(AiEvent("A", "", 10.0, event_time=9.0), self.BY_ARRIVAL, frame_lag=6.0) == 11.5
 
     def test_a_config_without_align_keeps_the_old_arrival_behaviour(self):
         assert AiFeedConfig.from_raw({"host": "h", "port": 1}).align == ALIGN_RECEIVED

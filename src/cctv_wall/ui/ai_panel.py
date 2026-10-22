@@ -10,7 +10,7 @@ from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QListWidget, QListWidgetItem, QVBoxLayout
 
-from cctv_wall.ai_feed import (ALIGN_AI_TIME, STATUS_CONNECTED, AiEvent, AiFeedClient, AiFeedConfig,
+from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_FRAME, STATUS_CONNECTED, AiEvent, AiFeedClient, AiFeedConfig,
                                release_due)
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site
@@ -24,6 +24,27 @@ CAMERA_COLOURS = ("#e5534b", "#3fb950", "#4493f8", "#d29922", "#a371f7", "#db61a
 UNKNOWN_CAMERA_COLOUR = "#8b949e"
 CONNECTED_COLOUR = "#2ea043"
 RECONNECTING_COLOUR = "#d29922"
+# More connections than this fold into one summary line until it is clicked.
+STATUS_LINES_SHOWN = 3
+
+
+def _camera_colour(index: int, shown: int) -> str:
+    """The hand-picked colours while a page fits them; a bigger page gets hues spread by the
+    golden ratio instead, so up to TILES_LIMIT tiles on screen never share one."""
+    if shown <= len(CAMERA_COLOURS):
+        return CAMERA_COLOURS[index % len(CAMERA_COLOURS)]
+    return QColor.fromHsvF((index * 0.381966) % 1.0, 0.62, 0.92).name()
+
+
+class _ClickableLabel(QLabel):
+    def __init__(self, on_click: Callable[[], None]) -> None:
+        super().__init__()
+        self._on_click = on_click
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_click()
+        super().mousePressEvent(event)
 
 
 class _FeedBridge(QObject):
@@ -76,16 +97,19 @@ class AiEventPanel(QFrame):
     def __init__(self, translator: Translator,
                  on_event_shown: Callable[[Camera, str, str, int], None],
                  on_camera_chosen: Callable[[str, Camera], None],
-                 on_connection_change: Callable[[int, int], None]) -> None:
+                 on_connection_change: Callable[[int, int], None],
+                 frame_lag: Callable[[Camera], float | None] = lambda _camera: None) -> None:
         super().__init__()
         self.setObjectName("aiPanel")
         self.setMinimumWidth(260)
         self._translator = translator
         self._on_event_shown = on_event_shown
+        self._frame_lag = frame_lag
         self._on_camera_chosen = on_camera_chosen
         self._on_connection_change = on_connection_change
         self._dots: dict[str, QIcon] = {}
         self._sites: tuple[Site, ...] = ()
+        self._shown_keys: tuple[str, ...] = ()   # tiles on the page, in order: they get colours first
         # _key(site, label) -> the camera, and its colour, for the sites on the wall.
         self._cameras: dict[str, tuple[str, Camera]] = {}
         self._colours: dict[str, str] = {}
@@ -107,7 +131,8 @@ class AiEventPanel(QFrame):
         title = QLabel(translator.t("ai_events"))
         title.setObjectName("eyebrow")
         box.addWidget(title)
-        self._status = QLabel()
+        self._status_expanded = False
+        self._status = _ClickableLabel(self._toggle_status)
         self._status.setObjectName("aiStatus")
         self._status.setWordWrap(True)
         self._status.setTextFormat(Qt.TextFormat.RichText)
@@ -129,11 +154,13 @@ class AiEventPanel(QFrame):
     def has_feed(self) -> bool:
         return bool(self._pending)
 
-    def watch(self, sites: Sequence[Site]) -> None:
-        """Follow the sites on the wall. Page changes call this too, so only connections that
-        were added or removed are touched: picking a camera of another site must not drop the
-        results already flowing for the first one."""
+    def watch(self, sites: Sequence[Site], shown: Sequence[tuple[str, Camera]] = ()) -> None:
+        """Follow the sites on the wall, connecting the AI feeds they carry; shown is the page's
+        (site, camera) tiles, which get distinct colours. Page changes call this too, so only
+        connections that were added or removed are touched: picking a camera of another site
+        must not drop the results already flowing for the first one."""
         sites = tuple(sites)
+        shown_keys = tuple(_key(site_name, camera.label) for site_name, camera in shown)
         wanted = [(site.name, feed) for site in sites for feed in site.ai_feeds]
         current = {(self._client_sites[client], client.config): client for client in self._pending}
         for connection, client in current.items():
@@ -143,17 +170,16 @@ class AiEventPanel(QFrame):
         kept = [connection for connection in wanted if connection in current]
         if not kept:
             self._list.clear()   # a different place altogether: the old results do not belong
-        if sites != self._sites:
-            self._sites = sites
+        if sites != self._sites or shown_keys != self._shown_keys:
+            self._sites, self._shown_keys = sites, shown_keys
             self._fill_filter()
         for site_name, feed in wanted:
             if (site_name, feed) not in current:
                 self._connect(site_name, feed)
         if not wanted:
             self._release_timer.stop()
-        self._status.setToolTip("\n".join(
-            f"{feed.address}  {self._translator.t('ai_delay_tip_ai_time' if feed.align == ALIGN_AI_TIME else 'ai_delay_tip_received', delay=feed.delay_ms)}"
-            for _site_name, feed in wanted))
+        self._status.setToolTip("\n".join(f"{feed.address}  {self._delay_tip(feed)}"
+                                           for _site_name, feed in wanted))
         self._render_status()
 
     def _connect(self, site_name: str, feed: AiFeedConfig) -> None:
@@ -190,14 +216,28 @@ class AiEventPanel(QFrame):
         self._connected[client] = status == STATUS_CONNECTED
         self._render_status()
 
+    def _toggle_status(self) -> None:
+        if len(self._connected) > STATUS_LINES_SHOWN:
+            self._status_expanded = not self._status_expanded
+            self._render_status()
+
     def _render_status(self) -> None:
-        lines = []
-        for feed_client, connected in self._connected.items():
-            colour = CONNECTED_COLOUR if connected else RECONNECTING_COLOUR
-            text = self._translator.t("ai_connected" if connected else "ai_reconnecting",
-                                      address=feed_client.config.address)
-            lines.append(f'<span style="color:{colour}">●</span> {text}')
-        self._status.setText("<br>".join(lines))
+        total, connected_count = len(self._connected), sum(self._connected.values())
+        foldable = total > STATUS_LINES_SHOWN
+        self._status.setCursor(Qt.CursorShape.PointingHandCursor if foldable
+                               else Qt.CursorShape.ArrowCursor)
+        if foldable and not self._status_expanded:
+            colour = CONNECTED_COLOUR if connected_count == total else RECONNECTING_COLOUR
+            text = self._translator.t("ai_status_summary", connected=connected_count, total=total)
+            self._status.setText(f'<span style="color:{colour}">●</span> {text} ▾')
+        else:
+            lines = []
+            for feed_client, connected in self._connected.items():
+                colour = CONNECTED_COLOUR if connected else RECONNECTING_COLOUR
+                text = self._translator.t("ai_connected" if connected else "ai_reconnecting",
+                                          address=feed_client.config.address)
+                lines.append(f'<span style="color:{colour}">●</span> {text}')
+            self._status.setText("<br>".join(lines) + (" ▴" if foldable else ""))
         self._on_connection_change(sum(self._connected.values()), len(self._connected))
 
     def _release(self) -> None:
@@ -209,7 +249,8 @@ class AiEventPanel(QFrame):
         added = False
         for client, pending in self._pending.items():
             site_name = self._client_sites[client]
-            for event in release_due(pending, now, client.config):
+            for event in release_due(pending, now, client.config,
+                                     lambda label: self._camera_frame_lag(site_name, label)):
                 key = _key(site_name, event.camera_label)
                 self._add_row(event, key)
                 added = True
@@ -226,6 +267,17 @@ class AiEventPanel(QFrame):
                 QTimer.singleShot(0, self._list.scrollToBottom)
         if not any(self._pending.values()):
             self._release_timer.stop()
+
+    def _delay_tip(self, feed: AiFeedConfig) -> str:
+        if feed.align == ALIGN_FRAME:
+            return self._translator.t("ai_delay_tip_frame")
+        if feed.align == ALIGN_AI_TIME:
+            return self._translator.t("ai_delay_tip_ai_time", delay=feed.delay_ms)
+        return self._translator.t("ai_delay_tip_received", delay=feed.delay_ms)
+
+    def _camera_frame_lag(self, site_name: str, label: str) -> float | None:
+        target = self._cameras.get(_key(site_name, label))
+        return self._frame_lag(target[1]) if target is not None else None
 
     def _colour(self, key: str) -> str:
         return self._colours.get(key, UNKNOWN_CAMERA_COLOUR)
@@ -262,8 +314,10 @@ class AiEventPanel(QFrame):
     def _fill_filter(self) -> None:
         self._cameras = {_key(site.name, camera.label): (site.name, camera)
                          for site in self._sites for camera in site.cameras}
-        self._colours = {key: CAMERA_COLOURS[index % len(CAMERA_COLOURS)]
-                         for index, key in enumerate(self._cameras)}
+        order = [key for key in self._shown_keys if key in self._cameras]
+        order += [key for key in self._cameras if key not in order]
+        self._colours = {key: _camera_colour(index, len(self._shown_keys))
+                         for index, key in enumerate(order)}
         chosen = self._filter.currentData()
         self._filter.blockSignals(True)
         self._filter.clear()

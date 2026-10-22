@@ -113,6 +113,37 @@ def delete_camera_at(parent: QWidget, workspace: Workspace, translator: Translat
     return _with_cameras(workspace, site_name, site.cameras[:index] + site.cameras[index + 1:])
 
 
+DELETE_LIST_LIMIT = 15   # names listed in the confirmation; the count covers the rest
+
+
+def delete_items(parent: QWidget, workspace: Workspace, translator: Translator,
+                 site_names: Iterable[str], cameras: Iterable[tuple[str, int]]) -> Workspace | None:
+    """Delete sites and cameras selected in the list after one confirmation naming them all.
+    The list saves at once, with no Cancel to fall back on, so this question is never skipped."""
+    site_names = [name for name in site_names if workspace.site(name) is not None]
+    cameras = [(name, index) for name, index in cameras if name not in site_names
+               and workspace.site(name) is not None and 0 <= index < len(workspace.site(name).cameras)]
+    items = [translator.t("delete_site_item", name=name) for name in site_names]
+    items += [workspace.site(name).cameras[index].label for name, index in cameras]
+    if not items:
+        return None
+    listed = items[:DELETE_LIST_LIMIT] + (["…"] if len(items) > DELETE_LIST_LIMIT else [])
+    answer = QMessageBox.question(parent, translator.t("delete_selected"),
+                                  translator.t("delete_selected_confirm", count=len(items),
+                                               items="\n".join(listed)))
+    if answer != QMessageBox.StandardButton.Yes:
+        return None
+    updated = workspace
+    for name in site_names:
+        updated = updated.without_site(name)
+    doomed = set(cameras)
+    for name in dict.fromkeys(name for name, _index in cameras):
+        kept = [camera for index, camera in enumerate(updated.site(name).cameras)
+                if (name, index) not in doomed]
+        updated = _with_cameras(updated, name, kept)
+    return updated
+
+
 def _with_cameras(workspace: Workspace, site_name: str, cameras: Iterable[Camera]) -> Workspace:
     """Raises ValueError when the site rejects them (e.g. duplicate names with AI connections)."""
     return workspace.with_site(site_name, workspace.site(site_name).with_cameras(cameras))

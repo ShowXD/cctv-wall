@@ -31,13 +31,15 @@ def _factory_builder(dry_run: bool):
     if dry_run:
         from cctv_wall.player import NullPlayerFactory
 
-        return lambda _strict_sync=False: NullPlayerFactory()
+        return lambda _strict_sync=False, _timestamps=False: NullPlayerFactory()
 
-    def build(strict_sync: bool = False):
-        if strict_sync:
+    def build(strict_sync: bool = False, timestamps: bool = False):
+        """timestamps: frame capture times are needed (AI results matched to the picture),
+        which only GStreamer reports; strict sync has them too."""
+        if strict_sync or timestamps:
             from cctv_wall.gst_sync import GStreamerSyncPlayerFactory
 
-            return GStreamerSyncPlayerFactory()
+            return GStreamerSyncPlayerFactory(synchronized=strict_sync)
         from cctv_wall.player import VlcPlayerFactory
 
         return VlcPlayerFactory()

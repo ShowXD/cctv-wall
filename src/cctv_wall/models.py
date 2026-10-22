@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 from urllib.parse import unquote, urlsplit, urlunsplit
@@ -36,6 +37,14 @@ SUPPORTED_LANGUAGES = frozenset({"zh_TW", "en"})
 # "system" 跟隨 Windows 的深淺色設定。
 THEMES = ("system", "dark", "light")
 DEFAULT_THEME = "system"
+DEFAULT_AI_PANEL_WIDTH = 300
+MIN_AI_PANEL_WIDTH = 200
+MAX_AI_PANEL_WIDTH = 800
+# 每格狀態資訊畫在影像的哪個角落。
+STATS_CORNERS = ("top_left", "top_right", "bottom_left", "bottom_right")
+DEFAULT_STATS_CORNER = "bottom_right"
+# 一種格子形狀（"3x3"）拖曳後的列高與欄寬比例；沒存的形狀就平均分配。
+TileLayout = tuple[str, tuple[float, ...], tuple[float, ...]]
 
 
 def _text(value: Any) -> str:
@@ -64,6 +73,27 @@ def _bounded(value: Any, default: int, low: int, high: int) -> int:
 
 def _sidebar_width(value: Any) -> int:
     return _bounded(value, DEFAULT_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH)
+
+
+def _tile_layouts(value: Any) -> tuple[TileLayout, ...]:
+    """{"3x3": {"rows": [...], "columns": [...]}}；形狀對不上或數值不對的項目略過，版面偏好不該
+    讓整個設定檔載入失敗。"""
+    if not isinstance(value, Mapping):
+        return ()
+    layouts = []
+    for shape, sizes in value.items():
+        match = re.fullmatch(r"(\d+)x(\d+)", str(shape))
+        if not match or not isinstance(sizes, Mapping):
+            continue
+        try:
+            rows = tuple(float(size) for size in sizes.get("rows", ()))
+            columns = tuple(float(size) for size in sizes.get("columns", ()))
+        except (TypeError, ValueError):
+            continue
+        if ((len(rows), len(columns)) == (int(match[1]), int(match[2]))
+                and all(size > 0 for size in rows + columns)):
+            layouts.append((str(shape), rows, columns))
+    return tuple(layouts)
 
 
 def _flag(value: Any) -> bool:
@@ -219,6 +249,11 @@ class Workspace:
     sidebar_width: int = DEFAULT_SIDEBAR_WIDTH
     sidebar_visible: bool = True
     theme: str = DEFAULT_THEME
+    ai_panel_width: int = DEFAULT_AI_PANEL_WIDTH
+    ai_panel_visible: bool = True
+    stats_visible: bool = False
+    stats_corner: str = DEFAULT_STATS_CORNER
+    tile_layouts: tuple[TileLayout, ...] = ()
 
     def __post_init__(self) -> None:
         # 地點名稱就是地點的識別，重複了就分不出是哪一個。
@@ -263,6 +298,7 @@ class Workspace:
                 raise ValueError(f"sites[{index}]: {e}") from e
         language = _text(raw.get("language")) or DEFAULT_LANGUAGE
         theme = _text(raw.get("theme"))
+        corner = _text(raw.get("stats_corner"))
         return cls(
             sites=tuple(built),
             last_site=_text(raw.get("last_site")),
@@ -275,6 +311,12 @@ class Workspace:
             sidebar_width=_sidebar_width(raw.get("sidebar_width")),
             sidebar_visible=_flag(raw.get("sidebar_visible", True)),
             theme=theme if theme in THEMES else DEFAULT_THEME,
+            ai_panel_width=_bounded(raw.get("ai_panel_width"), DEFAULT_AI_PANEL_WIDTH,
+                                    MIN_AI_PANEL_WIDTH, MAX_AI_PANEL_WIDTH),
+            ai_panel_visible=_flag(raw.get("ai_panel_visible", True)),
+            stats_visible=_flag(raw.get("stats_visible", False)),
+            stats_corner=corner if corner in STATS_CORNERS else DEFAULT_STATS_CORNER,
+            tile_layouts=_tile_layouts(raw.get("tile_layouts")),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -288,6 +330,12 @@ class Workspace:
             "sidebar_width": self.sidebar_width,
             "sidebar_visible": self.sidebar_visible,
             "theme": self.theme,
+            "ai_panel_width": self.ai_panel_width,
+            "ai_panel_visible": self.ai_panel_visible,
+            "stats_visible": self.stats_visible,
+            "stats_corner": self.stats_corner,
+            "tile_layouts": {shape: {"rows": list(rows), "columns": list(columns)}
+                             for shape, rows, columns in self.tile_layouts},
             "sites": [s.as_dict() for s in self.sites],
         }
 
@@ -334,6 +382,31 @@ class Workspace:
 
     def with_sidebar(self, width: int, visible: bool) -> "Workspace":
         return replace(self, sidebar_width=_sidebar_width(width), sidebar_visible=visible)
+
+    def with_ai_panel(self, width: int, visible: bool) -> "Workspace":
+        return replace(self, ai_panel_width=_bounded(width, DEFAULT_AI_PANEL_WIDTH,
+                                                     MIN_AI_PANEL_WIDTH, MAX_AI_PANEL_WIDTH),
+                       ai_panel_visible=visible)
+
+    def with_stats(self, visible: bool, corner: str) -> "Workspace":
+        return replace(self, stats_visible=visible,
+                       stats_corner=corner if corner in STATS_CORNERS else DEFAULT_STATS_CORNER)
+
+    def tile_layout(self, shape: str) -> TileLayout | None:
+        return next((layout for layout in self.tile_layouts if layout[0] == shape), None)
+
+    def with_tile_layout(self, shape: str, rows: Iterable[float],
+                         columns: Iterable[float]) -> "Workspace":
+        kept = tuple(layout for layout in self.tile_layouts if layout[0] != shape)
+        return replace(self, tile_layouts=(*kept, (shape, tuple(rows), tuple(columns))))
+
+    def with_default_layout(self) -> "Workspace":
+        """「回復預設版面」：格子平均、兩側面板回到預設寬度並顯示、狀態資訊關閉並回到右下角。
+        視窗大小與位置不動：可能正放在另一個螢幕上。"""
+        return replace(self, tile_layouts=(), sidebar_width=DEFAULT_SIDEBAR_WIDTH,
+                       sidebar_visible=True, ai_panel_width=DEFAULT_AI_PANEL_WIDTH,
+                       ai_panel_visible=True, stats_visible=False,
+                       stats_corner=DEFAULT_STATS_CORNER)
 
     def with_ai_tile_rows(self, tile_key: str, tile_values: tuple[str, ...]) -> "Workspace":
         """每個地點的每條 AI 連線，畫格下方都留同樣的種類。"""
