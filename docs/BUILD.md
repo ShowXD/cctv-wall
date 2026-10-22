@@ -66,14 +66,21 @@ uv run build cctv-wall --label client-a --replace  # 明確清掉該單一發行
 
 ## 自動打包（GitHub Actions）
 
-`.github/workflows/release.yml`：
+`.github/workflows/release.yml` 呼叫共用的
+[`ShowXD/dev-workflows` 的 `python-windows-release.yml`](https://github.com/ShowXD/dev-workflows/blob/main/.github/workflows/python-windows-release.yml)，
+與其他專案（例如 traffic-packet）同一套方式，本專案只提供 VLC、打包指令與 `--check` 檢查：
 
-**`main` 每次更新（合併後推送）都會自動打包**，完成後在該次 Actions 執行頁面最下方的 Artifacts 下載，
-名稱是 `CCTVWall-<版本>-<分支>-<commit 前 7 碼>`（例如 `CCTVWall-0.4.0-main-ac14c9c`），保留 14 天。
-不會建立 Release。連續更新時，還沒跑完的舊建置會被取消。其他分支不自動打包，
-要測某個分支的 exe 就在 Actions 頁面手動觸發（`workflow_dispatch`）並選那個分支。
+| 觸發 | 結果 |
+| --- | --- |
+| push `main`（合併後推送） | Release 頁面的 **`main-build`** 預先發布版被換成這次的 `CCTVWall.exe`，永遠只有最新一份 |
+| push `v*` tag | 檢查 tag 與 `pyproject.toml` 版本一致 → 建立正式 Release（`CCTVWall.exe`） |
+| Actions 頁面手動觸發 | 只產出 artifact，可選任何分支 |
 
-要正式出貨則打 tag，額外建立含 exe 的 GitHub Release：
+每次也會把 exe 放在該次執行的 Artifacts（`CCTVWall-<版本>-<分支>-<commit 前 7 碼>`），保留 14 天。
+同一分支連續更新時，還沒跑完的舊建置會被取消；tag 的建置一律跑完。
+`main-build` 是預先發布版，不算「最新版」：`releases/latest` 仍指向最新的正式 Release。
+
+正式出貨：
 
 ```bash
 # 1. 更新 pyproject.toml 的 version
@@ -85,9 +92,7 @@ git push origin v0.3.0
 workflow 會在 `windows-latest` 上：檢查 tag 與 `pyproject.toml` 版本一致 →
 `choco install vlc` → `uv sync` → `uv run build cctv-wall` → 確認沒有
 `VLC bundling: DISABLED` → 用打出來的 exe 跑 `--check` 確認 `strict sync : available`
-→ 上傳 artifact →（只有 tag）建立含 exe 的 GitHub Release。
-
-也可在 Actions 頁面手動觸發（`workflow_dispatch`），只產出 artifact、不建立 Release。
+→ 上傳 artifact → main 取代 `main-build`、tag 建立正式 Release。
 
 ### 為什麼 Release 只有一個 exe，而不是 Win10 / Win11 各一個
 

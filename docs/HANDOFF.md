@@ -59,7 +59,26 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
-## 2026-10-22：main 每次更新自動打包 exe 到 Actions artifact（`main`）
+## 2026-10-22：打包發布改用 dev-workflows 共用 workflow，main 更新也進 Release（已合併 main 並推送）
+
+**狀態：三個 repo 已合併 main 並推送（dev-workflows `d9813fb`、traffic-packet `da1d790`，cctv-wall 本次）；Actions 實際執行結果待確認。**
+- 使用者在 Release 頁面找不到 main 的建置，並要求與 traffic-packet 同一套固定方法，選擇「main 更新也進 Release」
+  與「放進 dev-workflows 共用」。
+- `ShowXD/dev-workflows` 新增 `python-windows-release.yml`（`workflow_call`）：
+  push main → 刪除並重建預先發布版 `main-build`（tag 指向該 commit，`--latest=false`，永遠只有一份）；
+  push `v*` tag → 檢查與 `pyproject.toml` 版本一致 → `gh release create --latest`；手動觸發只有 artifact。
+  每次都上傳 artifact（`<app>-<version>-<分支>-<sha7>`，14 天）。Release 資產用 exe 原名，
+  `releases/latest/download/<exe>` 連結因此不變（traffic-packet README 依賴這點）。
+  專案只提供 `app-name`、`exe-name`、`build`，選用 `prepare`、`sync`、`verify`（`$env:ASSET`）、`release-notes`。
+- cctv-wall `release.yml` 改成呼叫它：`prepare` 裝 VLC、`build` 檢查 `VLC bundling: DISABLED`、`verify` 跑 `--check`。
+  Release 檔名由 `CCTVWall-vX.Y.Z.exe` 改為 `CCTVWall.exe`。原本 softprops/action-gh-release 改由 runner 上的 `gh`。
+- traffic-packet `release.yml` 同樣改呼叫共用 workflow，README〈發布〉同步更新。
+- 合併順序：dev-workflows 必須先合併並推上 main（兩個專案引用 `@main`），再推兩個專案，否則 Actions 找不到 workflow。
+- 檢查：PyYAML 解析三個檔案、`actionlint` 三個檔案無警告。尚未在 GitHub 實際跑過。
+
+---
+
+## 2026-10-22：main 每次更新自動打包 exe 到 Actions artifact（`main`，已由上一節取代）
 
 **狀態：已 commit 並推送；推送即觸發第一次建置，結果尚待確認。**
 - 沿用 `.github/workflows/release.yml`（原本只有 tag 與手動觸發）：`on.push` 加上 `branches: [main]`（使用者的流程是在本機分支開發、合併後推送 main，
