@@ -39,6 +39,17 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-22：發布 v0.5.0（`main`）
+
+- `pyproject.toml` 版本 0.4.0 → 0.5.0（`uv lock` 只更新專案版本與 exclude-newer 時間戳，相依未變），BUILD.md 範例同步。
+  0.4.0（2026-08-25）之後累積的新功能都在這版：設定視窗改版、跨地點多選與同時播放、攝影機狀態、AI 依畫面時間戳對齊、
+  版面記憶、可拖曳間隔、共用發布流程。使用者已在現場確認。
+- 帶註解 tag `v0.5.0`（沿用 v0.2.0～v0.4.0 格式）→ 共用 workflow 檢查版本、打包、建立正式 Release（`CCTVWall.exe`）。
+  這是共用流程第一次發正式版，Actions 結果待確認。
+- 檢查：pytest 238 passed、`--dry-run` 0。
+
+---
+
 ## 2026-10-22：準備公開 repo：README 改寫與截圖（`main`）
 
 - 使用者要把 repo 設為 public。公開前檢查：`workspace.json` 從未進版控；gitleaks 掃 75 個 commit 無洩漏；

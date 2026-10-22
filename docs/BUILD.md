@@ -10,7 +10,7 @@ uv run build cctv-wall
 此指令固定產生一個 EXE，並自動內含 VLC（打包電腦有安裝 VLC 時）、GStreamer
 嚴格時間戳同步元件與啟動進度畫面。每次輸出至：
 `dist/releases/CCTVWall-<版本>-YYYYMMDD-HHMMSS/CCTVWall.exe`，不會覆寫舊版。
-版本一律讀自 `pyproject.toml` 的 `version`（目前 `0.4.0`），以下範例以此為例。
+版本一律讀自 `pyproject.toml` 的 `version`（目前 `0.5.0`），以下範例以此為例。
 `uv run build` 也可使用，`cctv-wall` 是明確標示建置目標的寫法。
 
 完整輸出範例：
@@ -20,9 +20,9 @@ uv run build cctv-wall
 [cctv-wall] output mode : onefile
 [cctv-wall] GStreamer strict-sync bundling: 374 files
 [cctv-wall] dropped 130 duplicate GStreamer files from the bundle root
-[cctv-wall] release : CCTVWall-0.4.0-20260805-143012
+[cctv-wall] release : CCTVWall-0.5.0-20260805-143012
 [cctv-wall] mode    : onefile (VLC + strict timestamp sync included)
-[cctv-wall] output  : ...\dist\releases\CCTVWall-0.4.0-20260805-143012
+[cctv-wall] output  : ...\dist\releases\CCTVWall-0.5.0-20260805-143012
 [cctv-wall] building…
 [cctv-wall] complete: ...\CCTVWall.exe
 ```
@@ -37,13 +37,13 @@ CI 的 release workflow 會自動擋下這種情況。
 
 | 輸入 | 產出的發行名稱 |
 | --- | --- |
-| `rc1` | `CCTVWall-0.4.0-rc1` |
-| `client a` | `CCTVWall-0.4.0-client-a` |
-| `客戶 A/B` | `CCTVWall-0.4.0-客戶-A-B` |
+| `rc1` | `CCTVWall-0.5.0-rc1` |
+| `client a` | `CCTVWall-0.5.0-client-a` |
+| `客戶 A/B` | `CCTVWall-0.5.0-客戶-A-B` |
 | `..--..` | **中止**：`the build label must contain a letter or number` |
 
 ```bash
-uv run build cctv-wall --label client-a            # → dist/releases/CCTVWall-0.4.0-client-a/
+uv run build cctv-wall --label client-a            # → dist/releases/CCTVWall-0.5.0-client-a/
 uv run build cctv-wall --label client-a --replace  # 明確清掉該單一發行資料夾並重建
 ```
 

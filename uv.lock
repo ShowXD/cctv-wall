@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.11"
 
 [options]
-exclude-newer = "2026-10-12T06:47:00.3291429Z"
+exclude-newer = "2026-10-15T06:56:56.4625852Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -17,7 +17,7 @@ wheels = [
 
 [[package]]
 name = "cctv-wall"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "pyside6-essentials" },
