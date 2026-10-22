@@ -1,8 +1,10 @@
 name: Release EXE
 
-# main 每次更新（合併後推送）都打包，exe 放在該次執行的 Artifacts，不建立 Release。
-# 其他分支不自動打包；要測某個分支的 exe，在 Actions 頁面手動觸發並選那個分支。
-# 打 tag 才出貨：git tag v0.2.0 && git push origin v0.2.0 → 另外建立含 exe 的 GitHub Release。
+# 打包與發布走共用的 ShowXD/dev-workflows python-windows-release，與其他專案同一套方式：
+#   push main      → 取代 Release 頁面的「main-build」預先發布版（永遠只有最新一份）
+#   push v* tag    → 檢查 tag 與 pyproject.toml 版本一致 → 建立正式 Release
+#   手動觸發       → 只產出 Actions artifact，可選任何分支
+# 這裡只放本專案特有的部分：打包機要裝 VLC、確認 VLC 有打進 exe、用 exe 跑 --check。
 on:
   push:
     branches: [main]
@@ -15,127 +17,59 @@ permissions:
 # 同一分支連續更新時，取消還沒跑完的舊建置：它的 exe 已經過時，只會白佔 runner 時間。
 # tag 的建置要出貨，一律跑完。
 concurrency:
-  group: build-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  build:
-    name: Build one-file EXE
-    runs-on: windows-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-        with:
-          enable-cache: true
-
-      # tag 必須與 pyproject.toml 的 version 一致，否則出貨的 exe 會標錯版本。
-      - name: Check tag matches project version
-        if: startsWith(github.ref, 'refs/tags/')
-        # tag 名稱走 env 而非 ${{ }}：後者會在 PowerShell 剖析前就被貼進原始碼，
-        # 含 PowerShell 語法的 tag 名稱會被當成指令執行。
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          $tag = "$env:TAG" -replace '^v', ''
-          $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-          if ($tag -ne $version) {
-            Write-Error "tag $tag 與 pyproject.toml 的 version $version 不一致。請先更新版本號再打 tag。"
-            exit 1
-          }
-          Write-Host "version $version OK"
+  release:
+    uses: ShowXD/dev-workflows/.github/workflows/python-windows-release.yml@main
+    with:
+      app-name: CCTVWall
+      exe-name: CCTVWall.exe
 
       # 打包機必須裝 VLC，否則做出來的 exe 需要現場電腦自行安裝 VLC。
-      - name: Install VLC (bundled into the EXE)
-        run: choco install vlc -y --no-progress
+      prepare: choco install vlc -y --no-progress
 
-      - name: Sync build environment
-        run: uv sync
-
-      - name: Build
-        run: |
-          $out = uv run build cctv-wall 2>&1 | Tee-Object -Variable captured
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (($captured -join "`n") -match 'VLC bundling: DISABLED') {
-            Write-Error '打包機找不到 VLC，做出來的 exe 不含 VLC。中止。'
-            exit 1
-          }
-
-      # tag：CCTVWall-v0.4.0；分支：CCTVWall-0.4.0-<分支>-<commit 前 7 碼>，一看就知道是哪一版。
-      # 分支名稱的 / 等字元不能出現在 artifact 名稱，換成 -。
-      - name: Collect the executable
-        id: collect
-        env:
-          REF_NAME: ${{ github.ref_name }}
-          REF_TYPE: ${{ github.ref_type }}
-          SHA: ${{ github.sha }}
-        run: |
-          $exe = Get-ChildItem -Path dist/releases -Recurse -Filter CCTVWall.exe |
-                 Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $exe) { Write-Error 'dist/releases 底下找不到 CCTVWall.exe'; exit 1 }
-          if ($env:REF_TYPE -eq 'tag') {
-            $label = "CCTVWall-$env:REF_NAME"
-          } else {
-            $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
-            $branch = $env:REF_NAME -replace '[^A-Za-z0-9._-]', '-'
-            $label = "CCTVWall-$version-$branch-$($env:SHA.Substring(0, 7))"
-          }
-          $name = "$label.exe"
-          New-Item -ItemType Directory -Force artifact | Out-Null
-          Copy-Item $exe.FullName "artifact/$name"
-          Write-Host ("{0}  {1} MiB" -f $name, [math]::Round($exe.Length / 1MB, 1))
-          "asset=artifact/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "label=$label" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      build: |
+        $out = uv run build cctv-wall 2>&1 | Tee-Object -Variable captured
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        if (($captured -join "`n") -match 'VLC bundling: DISABLED') {
+          Write-Error '打包機找不到 VLC，做出來的 exe 不含 VLC。中止。'
+          exit 1
+        }
 
       # 打包後的自我診斷。用 Start-Process 導向檔案而非直接呼叫：
       # exe 是 console=False，__main__._check() 在 sys.stdout is None 時會彈對話框，
       # 在 headless runner 上會一路卡到 job timeout。導向檔案可確保 stdout 有效控制代碼，
       # WaitForExit 的上限則是萬一還是彈窗時的保險。
-      - name: Smoke test the EXE
-        env:
-          ASSET: ${{ steps.collect.outputs.asset }}
-        run: |
-          $p = Start-Process -FilePath "$env:ASSET" `
-                             -ArgumentList '--check' -NoNewWindow -PassThru `
-                             -RedirectStandardOutput check.txt -RedirectStandardError check.err
-          if (-not $p.WaitForExit(180000)) {
-            $p.Kill()
-            Write-Error 'CCTVWall.exe --check 逾時 3 分鐘（多半是彈出了對話框）。'
-            exit 1
-          }
-          $report = (Get-Content check.txt -Raw) + (Get-Content check.err -Raw)
-          Write-Host $report
+      verify: |
+        $p = Start-Process -FilePath "$env:ASSET" `
+                           -ArgumentList '--check' -NoNewWindow -PassThru `
+                           -RedirectStandardOutput check.txt -RedirectStandardError check.err
+        if (-not $p.WaitForExit(180000)) {
+          $p.Kill()
+          Write-Error 'CCTVWall.exe --check 逾時 3 分鐘（多半是彈出了對話框）。'
+          exit 1
+        }
+        $report = (Get-Content check.txt -Raw) + (Get-Content check.err -Raw)
+        Write-Host $report
 
-          # 硬性條件：VLC 是打包進去的，與 runner 環境無關，沒有就是打包壞了。
-          if ($report -notmatch 'libvlc\s*:\s*\d') {
-            Write-Error 'exe 沒有回報 libvlc 版本，內含的 VLC 沒打包成功。'
-            exit 1
-          }
+        # 硬性條件：VLC 是打包進去的，與 runner 環境無關，沒有就是打包壞了。
+        if ($report -notmatch 'libvlc\s*:\s*\d') {
+          Write-Error 'exe 沒有回報 libvlc 版本，內含的 VLC 沒打包成功。'
+          exit 1
+        }
 
-          # 非硬性：strict sync 需要 d3d11 元件註冊成功，runner 是無 GPU 的 VM，
-          # 這裡失敗不一定代表 exe 壞掉。標成警告，由實機驗收把關。
-          if ($report -notmatch 'strict sync\s*:\s*available') {
-            Write-Warning 'runner 上 strict sync 不可用。請務必在實際的 Windows 10 目標機上跑一次 --check 確認。'
-          }
+        # 非硬性：strict sync 需要 d3d11 元件註冊成功，runner 是無 GPU 的 VM，
+        # 這裡失敗不一定代表 exe 壞掉。標成警告，由實機驗收把關。
+        if ($report -notmatch 'strict sync\s*:\s*available') {
+          Write-Warning 'runner 上 strict sync 不可用。請務必在實際的 Windows 10 目標機上跑一次 --check 確認。'
+        }
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ${{ steps.collect.outputs.label }}
-          path: ${{ steps.collect.outputs.asset }}
-          retention-days: 14
+      release-notes: |
+        單一 EXE，內含 VLC 與 GStreamer 嚴格時間戳同步元件，現場電腦不必安裝任何東西。
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: ${{ steps.collect.outputs.asset }}
-          generate_release_notes: true
-          body: |
-            單一 EXE，內含 VLC 與 GStreamer 嚴格時間戳同步元件，現場電腦不必安裝任何東西。
+        **部署**：把 `CCTVWall.exe` 放到目標資料夾 → 先跑 `CCTVWall.exe --check` →
+        把 `workspace.json` 放在 exe 旁邊（可從 `workspace.example.json` 複製修改）。
 
-            **部署**：把 `CCTVWall.exe` 放到目標資料夾 → 先跑 `CCTVWall.exe --check` →
-            把 `workspace.json` 放在 exe 旁邊（可從 `workspace.example.json` 複製修改）。
-
-            詳見 [部署說明](https://github.com/${{ github.repository }}/blob/main/docs/BUILD.md)。
+        詳見 [部署說明](https://github.com/ShowXD/cctv-wall/blob/main/docs/BUILD.md)。
