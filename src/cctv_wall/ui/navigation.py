@@ -346,6 +346,7 @@ class SiteNavigation(QFrame):
     def _show_context_menu(self, position) -> None:
         item = self._sites.itemAt(position)
         if item is None:
+            self._show_list_menu(position)
             return
         selected = self._selected_cameras()
         together = len(selected) > 1 and item.isSelected()
@@ -366,6 +367,8 @@ class SiteNavigation(QFrame):
             self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
             self._add_action(menu, self._translator.t("rename"), "rename", site_name)
             self._add_action(menu, self._translator.t("ai_feeds_action"), "ai_feeds", site_name)
+            self._add_action(menu, self._translator.t("import_cameras"), "import_cameras", site_name)
+            self._add_action(menu, self._translator.t("export_cameras"), "export_cameras", site_name)
             menu.addSeparator()
             self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
         else:
@@ -374,6 +377,15 @@ class SiteNavigation(QFrame):
                 item = menu.addAction(text)
                 item.triggered.connect(lambda _checked=False, chosen=action:
                                        self._on_camera_action(chosen, site_name, camera_index))
+        menu.exec(self._sites.viewport().mapToGlobal(position))
+        menu.deleteLater()
+
+    def _show_list_menu(self, position) -> None:
+        """Below the last row: import into the site on screen (or a new one), or export every site."""
+        menu = QMenu(self.window())
+        menu.setMinimumWidth(200)
+        self._add_action(menu, self._translator.t("import_cameras"), "import_cameras", "")
+        self._add_action(menu, self._translator.t("export_all_cameras"), "export_all_cameras", "")
         menu.exec(self._sites.viewport().mapToGlobal(position))
         menu.deleteLater()
 

@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-10-22（設定視窗、AI 對齊、主畫面多選與版面記憶，已合併 main 並推送）
+> 最後更新：2026-10-22（攝影機清單 Excel／CSV 匯入匯出，分支 `feature/camera-import-export`，已 commit、未 push，issue #2）
 
 ---
 
@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 238 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 248 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,12 +30,31 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **237 passed**（2026-10-22，`main`，`uv run --group dev pytest -q`） |
+| 測試 | **248 passed**（2026-10-22，`feature/camera-import-export`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
 
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
+
+---
+
+## 2026-10-22：攝影機清單 Excel／CSV 匯入與匯出（分支 `feature/camera-import-export`）
+
+**狀態：已實作、已測試，已 commit 於分支（未 push、未合併 main）；尚未重新打包驗證 exe 內的 openpyxl。** Issue：#2（分支已以 Development 連結）。
+- 需求：現場拿到的連線資訊是 Excel／CSV、欄位每份不同；要能指認每欄是什麼後一次匯入，也要能匯出。
+- 使用者決定：Excel 用 **openpyxl**（新增相依 `openpyxl>=3.1.5`，帶入 `et-xmlfile`；只支援 `.xlsx`）；
+  可指認地點欄（不存在就新增地點）；支援只有 IP／Port 的資料（選廠牌樣板組網址）；匯出前詢問是否含帳密（預設否）。
+- `camera_table.py`（領域層）：`read_rows`（CSV 先 `utf-8-sig` 再 `cp950`；xlsx 的 554.0 轉回 554）、
+  `guess_mapping`（標題關鍵字，比對順序避免 username 被當名稱）、`cameras_from_rows`（交給 `Camera.from_raw`，
+  錯誤列回報試算表列號後繼續）、`merge_into`（同地點相同網址＋帳號略過）、`table_rows`／`write_rows`。
+- `ui/table_import.py`：每欄上方下拉選欄位（同一欄位只能指給一欄）、標題列數、廠牌（只在有 IP 欄且無網址欄時啟用）、
+  預設地點、即時摘要與錯誤 tooltip。指令掛在 `app.SITE_COMMANDS`（`import_cameras`／`export_cameras`／`export_all_cameras`）；
+  側欄地點右鍵與清單空白處右鍵（原本空白處沒有選單）。signal 皆接 bound method。
+- 檢查：pytest 248 passed（新增 `tests/test_camera_table.py` 10 項；`test_i18n` 的 INDIRECT_KEYS 納入匯入欄位標籤）、
+  `--dry-run` 0；offscreen 腳本操作對話框：猜欄位、改指認時另一欄自動清空、IP＋hikvision 組網址、錯誤列號正確、新地點建立。
+  尚未在實際視窗點選檔案對話框、尚未打包。
+- 下一步：使用者同意後 push 分支；打包 exe 實測匯入一份現場 xlsx 與匯出；合併 main 需使用者要求。
 
 ---
 
