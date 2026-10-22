@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 248 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 250 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **248 passed**（2026-10-22，`feature/camera-import-export`，`uv run --group dev pytest -q`） |
+| 測試 | **250 passed**（2026-10-22，`feature/camera-import-export`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -54,6 +54,10 @@ uv run build cctv-wall         # 打包（一律 onefile）
 - 檢查：pytest 248 passed（新增 `tests/test_camera_table.py` 10 項；`test_i18n` 的 INDIRECT_KEYS 納入匯入欄位標籤）、
   `--dry-run` 0；offscreen 腳本操作對話框：猜欄位、改指認時另一欄自動清空、IP＋hikvision 組網址、錯誤列號正確、新地點建立。
   尚未在實際視窗點選檔案對話框、尚未打包。
+- 使用者實測後要求可選工作表（原本只讀作用中的那張）：`camera_table.sheet_names`／`read_rows(path, sheet)`，
+  對話框上方「工作表」下拉（CSV 不顯示），換工作表重建預覽、重新猜欄位與標題列數；損毀或假 `.xlsx` 改回報讀檔錯誤
+  （openpyxl 拋的 `InvalidFileException`／`BadZipFile` 原本不在攔截範圍，指令會直接中斷）。
+  檢查：pytest 250 passed；offscreen 腳本確認切到第二張工作表後匯入 2 台、CSV 不顯示工作表選單。
 - 下一步：使用者同意後 push 分支；打包 exe 實測匯入一份現場 xlsx 與匯出；合併 main 需使用者要求。
 
 ---

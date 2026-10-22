@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import zipfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -40,15 +41,36 @@ def _cell(value: Any) -> str:
     return str(value).strip()
 
 
-def read_rows(path: str | Path) -> list[list[str]]:
-    """讀出第一個（作用中的）工作表或 CSV 的所有列，儲存格一律是去掉前後空白的字串。"""
+def _open_workbook(path: Path):
+    from openpyxl import load_workbook  # 只有匯入 Excel 時才載入
+    from openpyxl.utils.exceptions import InvalidFileException
+    try:
+        return load_workbook(path, read_only=True, data_only=True)
+    except (InvalidFileException, zipfile.BadZipFile, KeyError) as error:
+        # 副檔名是 .xlsx 但內容不是（或已損毀）：當成讀檔錯誤回報，不讓整個指令崩潰。
+        raise ValueError(f"{path.name}: not a valid .xlsx workbook") from error
+
+
+def sheet_names(path: str | Path) -> tuple[list[str], int]:
+    """活頁簿的工作表名稱與作用中工作表的位置；CSV 沒有工作表，回傳 ([], 0)。"""
+    path = Path(path)
+    if path.suffix.lower() != ".xlsx":
+        return [], 0
+    workbook = _open_workbook(path)
+    try:
+        return list(workbook.sheetnames), workbook.sheetnames.index(workbook.active.title)
+    finally:
+        workbook.close()
+
+
+def read_rows(path: str | Path, sheet: str | None = None) -> list[list[str]]:
+    """讀出指定工作表（預設作用中的那張）或 CSV 的所有列，儲存格一律是去掉前後空白的字串。"""
     path = Path(path)
     if path.suffix.lower() == ".xlsx":
-        from openpyxl import load_workbook  # 只有匯入 Excel 時才載入
-        workbook = load_workbook(path, read_only=True, data_only=True)
+        workbook = _open_workbook(path)
         try:
-            return [[_cell(value) for value in row]
-                    for row in workbook.active.iter_rows(values_only=True)]
+            worksheet = workbook[sheet] if sheet else workbook.active
+            return [[_cell(value) for value in row] for row in worksheet.iter_rows(values_only=True)]
         finally:
             workbook.close()
     raw = path.read_bytes()

@@ -25,6 +25,28 @@ def test_xlsx_round_trip_keeps_whole_numbers(tmp_path):
     assert camera_table.read_rows(path) == [["IP", "Port"], ["192.0.2.10", "554"]]
 
 
+def test_any_worksheet_can_be_read(tmp_path):
+    from openpyxl import Workbook
+    path = tmp_path / "sites.xlsx"
+    workbook = Workbook()
+    workbook.active.title = "說明"
+    workbook.active.append(["這張不是清單"])
+    workbook.create_sheet("攝影機").append(["IP", "192.0.2.10"])
+    workbook.active = 1
+    workbook.save(path)
+    assert camera_table.sheet_names(path) == (["說明", "攝影機"], 1)
+    assert camera_table.read_rows(path) == [["IP", "192.0.2.10"]]
+    assert camera_table.read_rows(path, "說明") == [["這張不是清單"]]
+    assert camera_table.sheet_names(tmp_path / "list.csv") == ([], 0)
+
+
+def test_broken_xlsx_is_a_read_error(tmp_path):
+    path = tmp_path / "broken.xlsx"
+    path.write_text("not a workbook")
+    with pytest.raises(ValueError):
+        camera_table.sheet_names(path)
+
+
 def test_guess_mapping_in_both_languages():
     assert camera_table.guess_mapping(["地點", "攝影機名稱", "IP 位址", "Port", "帳號", "密碼"]) == {
         "site": 0, "name": 1, "host": 2, "port": 3, "user": 4, "password": 5}

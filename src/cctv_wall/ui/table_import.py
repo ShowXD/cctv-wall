@@ -29,11 +29,13 @@ class ImportDialog(QDialog):
     """A preview of the sheet with a field picker above every column."""
 
     def __init__(self, parent: QWidget, translator: Translator, workspace: Workspace,
-                 rows: Sequence[Sequence[str]], default_site: str) -> None:
+                 path: str, sheets: Sequence[str], active_sheet: int, default_site: str) -> None:
         super().__init__(parent)
         self._translator = translator
         self._workspace = workspace
-        self._rows = rows
+        self._path = path
+        self._rows: list[list[str]] = []
+        self._pickers: list[QComboBox] = []
         self.result_workspace: Workspace | None = None
         self.setWindowTitle(translator.t("import_title"))
         box = QVBoxLayout(self)
@@ -42,33 +44,20 @@ class ImportDialog(QDialog):
         help_label.setWordWrap(True)
         box.addWidget(help_label)
 
-        columns = max((len(row) for row in rows), default=0)
-        guessed = camera_table.guess_mapping(rows[0]) if rows else {}
-        shown = rows[:PREVIEW_ROWS + 1]
-        # Row 0 holds the pickers; the sheet's own row numbers follow, so error messages match.
-        self._table = QTableWidget(len(shown) + 1, columns)
-        self._table.setVerticalHeaderLabels(["", *(str(number) for number in range(1, len(shown) + 1))])
-        self._pickers: list[QComboBox] = []
-        for column in range(columns):
-            picker = QComboBox()
-            picker.addItem(translator.t("import_skip"), "")
-            for field in camera_table.FIELDS:
-                picker.addItem(translator.t(FIELD_LABEL_KEYS[field]), field)
-            chosen = next((field for field, index in guessed.items() if index == column), "")
-            picker.setCurrentIndex(picker.findData(chosen))
-            picker.activated.connect(self._field_chosen)
-            self._table.setCellWidget(0, column, picker)
-            self._pickers.append(picker)
-        for row_number, row in enumerate(shown, start=1):
-            for column, text in enumerate(row):
-                self._table.setItem(row_number, column, QTableWidgetItem(text))
-        self._table.resizeColumnsToContents()
+        form = QFormLayout()
+        # CSV has no worksheets, so the picker only appears for a workbook.
+        self._sheet = QComboBox()
+        self._sheet.addItems(sheets)
+        self._sheet.setCurrentIndex(active_sheet)
+        self._sheet.activated.connect(self._sheet_chosen)
+        if sheets:
+            form.addRow(translator.t("import_sheet"), self._sheet)
+        box.addLayout(form)
+        self._table = QTableWidget()
         box.addWidget(self._table, 1)
 
         form = QFormLayout()
         self._header_rows = QSpinBox()
-        self._header_rows.setRange(0, len(rows))
-        self._header_rows.setValue(1 if guessed else 0)
         self._header_rows.valueChanged.connect(self._refresh)
         form.addRow(translator.t("import_header_rows"), self._header_rows)
         self._vendor = QComboBox()
@@ -90,7 +79,49 @@ class ImportDialog(QDialog):
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)
         self.resize(900, 560)
+
+    def load(self) -> bool:
+        """Read the chosen worksheet (or the CSV) into the preview; False after explaining why not."""
+        try:
+            rows = camera_table.read_rows(self._path, self._sheet.currentText() or None)
+        except (OSError, ValueError) as error:
+            logger().warning("could not read %s: %s", self._path, error)
+            QMessageBox.warning(self, self._translator.t("import_title"),
+                                self._translator.t("import_read_error", error=error))
+            return False
+        self._rows = rows
+        columns = max((len(row) for row in rows), default=0)
+        guessed = camera_table.guess_mapping(rows[0]) if rows else {}
+        shown = rows[:PREVIEW_ROWS + 1]
+        # Row 0 holds the pickers; the sheet's own row numbers follow, so error messages match.
+        self._table.clear()
+        self._table.setRowCount(len(shown) + 1)
+        self._table.setColumnCount(columns)
+        self._table.setVerticalHeaderLabels(["", *(str(number) for number in range(1, len(shown) + 1))])
+        self._pickers = []
+        for column in range(columns):
+            picker = QComboBox()
+            picker.addItem(self._translator.t("import_skip"), "")
+            for field in camera_table.FIELDS:
+                picker.addItem(self._translator.t(FIELD_LABEL_KEYS[field]), field)
+            chosen = next((field for field, index in guessed.items() if index == column), "")
+            picker.setCurrentIndex(picker.findData(chosen))
+            picker.activated.connect(self._field_chosen)
+            self._table.setCellWidget(0, column, picker)
+            self._pickers.append(picker)
+        for row_number, row in enumerate(shown, start=1):
+            for column, text in enumerate(row):
+                self._table.setItem(row_number, column, QTableWidgetItem(text))
+        self._table.resizeColumnsToContents()
+        self._header_rows.blockSignals(True)
+        self._header_rows.setRange(0, len(rows))
+        self._header_rows.setValue(1 if guessed else 0)
+        self._header_rows.blockSignals(False)
         self._refresh()
+        return True
+
+    def _sheet_chosen(self, _index: int) -> None:
+        self.load()
 
     def _field_chosen(self, _index: int) -> None:
         """A field belongs to one column: choosing it here takes it away from the column that had it."""
@@ -149,7 +180,7 @@ def import_cameras(parent: QWidget, workspace: Workspace, translator: Translator
     if not path:
         return None
     try:
-        rows = camera_table.read_rows(path)
+        sheets, active_sheet = camera_table.sheet_names(path)
     except (OSError, ValueError) as error:
         logger().warning("could not read %s: %s", path, error)
         QMessageBox.warning(parent, translator.t("import_title"),
@@ -157,9 +188,9 @@ def import_cameras(parent: QWidget, workspace: Workspace, translator: Translator
         return None
     default_site = (site_name if workspace.site(site_name) is not None
                     else workspace.unique_site_name(translator.t("untitled_site")))
-    dialog = ImportDialog(parent, translator, workspace, rows, default_site)
+    dialog = ImportDialog(parent, translator, workspace, path, sheets, active_sheet, default_site)
     dialog.setModal(True)
-    if dialog.exec() != QDialog.DialogCode.Accepted:
+    if not dialog.load() or dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.result_workspace
 
