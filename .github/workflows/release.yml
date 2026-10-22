@@ -1,14 +1,22 @@
 name: Release EXE
 
-# 打 tag 就出貨：git tag v0.2.0 && git push origin v0.2.0
-# 也可以在 Actions 頁面手動觸發，只產出 artifact、不建立 Release。
+# main 每次更新（合併後推送）都打包，exe 放在該次執行的 Artifacts，不建立 Release。
+# 其他分支不自動打包；要測某個分支的 exe，在 Actions 頁面手動觸發並選那個分支。
+# 打 tag 才出貨：git tag v0.2.0 && git push origin v0.2.0 → 另外建立含 exe 的 GitHub Release。
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# 同一分支連續更新時，取消還沒跑完的舊建置：它的 exe 已經過時，只會白佔 runner 時間。
+# tag 的建置要出貨，一律跑完。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   build:
@@ -55,19 +63,31 @@ jobs:
             exit 1
           }
 
+      # tag：CCTVWall-v0.4.0；分支：CCTVWall-0.4.0-<分支>-<commit 前 7 碼>，一看就知道是哪一版。
+      # 分支名稱的 / 等字元不能出現在 artifact 名稱，換成 -。
       - name: Collect the executable
         id: collect
         env:
-          TAG: ${{ github.ref_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          SHA: ${{ github.sha }}
         run: |
           $exe = Get-ChildItem -Path dist/releases -Recurse -Filter CCTVWall.exe |
                  Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $exe) { Write-Error 'dist/releases 底下找不到 CCTVWall.exe'; exit 1 }
-          $name = "CCTVWall-$env:TAG.exe"
+          if ($env:REF_TYPE -eq 'tag') {
+            $label = "CCTVWall-$env:REF_NAME"
+          } else {
+            $version = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+            $branch = $env:REF_NAME -replace '[^A-Za-z0-9._-]', '-'
+            $label = "CCTVWall-$version-$branch-$($env:SHA.Substring(0, 7))"
+          }
+          $name = "$label.exe"
           New-Item -ItemType Directory -Force artifact | Out-Null
           Copy-Item $exe.FullName "artifact/$name"
           Write-Host ("{0}  {1} MiB" -f $name, [math]::Round($exe.Length / 1MB, 1))
           "asset=artifact/$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "label=$label" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       # 打包後的自我診斷。用 Start-Process 導向檔案而非直接呼叫：
       # exe 是 console=False，__main__._check() 在 sys.stdout is None 時會彈對話框，
@@ -102,7 +122,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: CCTVWall-${{ github.ref_name }}
+          name: ${{ steps.collect.outputs.label }}
           path: ${{ steps.collect.outputs.asset }}
           retention-days: 14
 

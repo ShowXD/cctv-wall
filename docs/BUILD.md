@@ -68,6 +68,13 @@ uv run build cctv-wall --label client-a --replace  # 明確清掉該單一發行
 
 `.github/workflows/release.yml`：
 
+**`main` 每次更新（合併後推送）都會自動打包**，完成後在該次 Actions 執行頁面最下方的 Artifacts 下載，
+名稱是 `CCTVWall-<版本>-<分支>-<commit 前 7 碼>`（例如 `CCTVWall-0.4.0-main-ac14c9c`），保留 14 天。
+不會建立 Release。連續更新時，還沒跑完的舊建置會被取消。其他分支不自動打包，
+要測某個分支的 exe 就在 Actions 頁面手動觸發（`workflow_dispatch`）並選那個分支。
+
+要正式出貨則打 tag，額外建立含 exe 的 GitHub Release：
+
 ```bash
 # 1. 更新 pyproject.toml 的 version
 # 2. 打 tag
@@ -78,7 +85,7 @@ git push origin v0.3.0
 workflow 會在 `windows-latest` 上：檢查 tag 與 `pyproject.toml` 版本一致 →
 `choco install vlc` → `uv sync` → `uv run build cctv-wall` → 確認沒有
 `VLC bundling: DISABLED` → 用打出來的 exe 跑 `--check` 確認 `strict sync : available`
-→ 上傳 artifact → 建立含 exe 的 GitHub Release。
+→ 上傳 artifact →（只有 tag）建立含 exe 的 GitHub Release。
 
 也可在 Actions 頁面手動觸發（`workflow_dispatch`），只產出 artifact、不建立 Release。
 

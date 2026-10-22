@@ -39,6 +39,19 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-22：main 每次更新自動打包 exe 到 Actions artifact（`main`）
+
+**狀態：已 commit 並推送；推送即觸發第一次建置，結果尚待確認。**
+- 沿用 `.github/workflows/release.yml`（原本只有 tag 與手動觸發）：`on.push` 加上 `branches: [main]`（使用者的流程是在本機分支開發、合併後推送 main，
+  只打包 main 可避免日後推送功能分支時每個半成品都跑一次；其他分支用手動觸發）。
+  分支 push 只上傳 artifact（`CCTVWall-<version>-<分支>-<sha7>`，分支名稱非 `[A-Za-z0-9._-]` 換成 `-`），
+  建立 Release 的步驟仍只在 tag 執行。新增 `concurrency`：同一 ref 的新 push 取消舊建置，tag 不取消。
+- main 每次更新都會跑一次 Windows 打包（含 `choco install vlc`），會用掉 Actions 分鐘數。
+- 檢查：PyYAML 解析 workflow 成功；PowerShell 模擬命名：分支 `fix/editor-add-button` → `CCTVWall-0.4.0-fix-editor-add-button-ac14c9c`，
+  tag `v0.4.0` → `CCTVWall-v0.4.0`。
+
+---
+
 ## 2026-10-22：版面記憶與一鍵回復、攝影機狀態可選角落（分支 `fix/editor-add-button`，已合併 main）
 
 **狀態：已實作、已驗證，已合併 main 並推送。**
