@@ -59,6 +59,10 @@ _VLC_STATE_NAMES: dict[str, PlaybackState] = {
 }
 
 
+# libvlc marquee positions: 1 left, 2 right, 4 top, 8 bottom, added together.
+_MARQUEE_CORNERS = {"top_left": 5, "top_right": 6, "bottom_left": 9, "bottom_right": 10}
+
+
 class Player(Protocol):
     """One video surface bound to one window."""
 
@@ -69,8 +73,12 @@ class Player(Protocol):
     def stats(self) -> PlaybackStats | None:
         """None when the backend cannot report them."""
 
-    def show_overlay(self, text: str | None) -> None:
-        """Draw text on the picture itself, or remove it with None."""
+    def show_overlay(self, text: str | None, corner: str = "bottom_right") -> None:
+        """Draw text in a corner of the picture itself (models.STATS_CORNERS), or remove it with None."""
+
+    def frame_lag(self) -> float | None:
+        """Seconds the picture on screen trails its capture time by the camera's own clock;
+        None when the backend cannot tell."""
 
     def release(self) -> None: ...
 
@@ -121,9 +129,10 @@ class VlcPlayer:
         return PlaybackStats(width, height, counters.displayed_pictures, counters.lost_pictures,
                              round(counters.input_bitrate * 8000))
 
-    def show_overlay(self, text: str | None) -> None:
+    def show_overlay(self, text: str | None, corner: str = "bottom_right") -> None:
         """libvlc's marquee draws inside the video, which a Qt widget cannot: the native video
-        window paints over its siblings."""
+        window paints over its siblings. That is also why it cannot be dragged: the picture
+        never sees the mouse, so it is placed in one of the corners instead."""
         import vlc
 
         option = vlc.VideoMarqueeOption
@@ -132,7 +141,7 @@ class VlcPlayer:
             return
         _width, height = self._video_size()
         self._player.video_set_marquee_int(option.Enable, 1)
-        self._player.video_set_marquee_int(option.Position, 5)   # top left
+        self._player.video_set_marquee_int(option.Position, _MARQUEE_CORNERS.get(corner, 10))
         # The size is in video pixels: about the same share of the tile at any resolution.
         self._player.video_set_marquee_int(option.Size, max(14, height // 24))
         self._player.video_set_marquee_int(option.Timeout, 0)
@@ -145,6 +154,9 @@ class VlcPlayer:
             return self._player.video_get_size(0)
         except vlc.VLCException:
             return 0, 0   # no video track yet
+
+    def frame_lag(self) -> None:
+        return None   # libvlc does not expose a frame's capture (RTCP/NTP) time
 
     def release(self) -> None:
         """Tear down without blocking the Qt event loop on an unhealthy RTSP connection.
@@ -212,6 +224,7 @@ class NullPlayer:
         self.released = False
         self.reported_state = state
         self.overlay: str | None = None
+        self.lag: float | None = None
 
     def play(self, url: str, window_id: int) -> None:
         self.calls.append((url, window_id))
@@ -222,8 +235,12 @@ class NullPlayer:
     def stats(self) -> PlaybackStats | None:
         return PlaybackStats(1920, 1080, 15 * len(self.calls), 0, 2048)
 
-    def show_overlay(self, text: str | None) -> None:
+    def show_overlay(self, text: str | None, corner: str = "bottom_right") -> None:
         self.overlay = text
+        self.overlay_corner = corner
+
+    def frame_lag(self) -> float | None:
+        return self.lag
 
     def release(self) -> None:
         self.released = True

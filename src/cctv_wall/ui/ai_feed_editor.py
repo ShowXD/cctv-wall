@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QSpinBox, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QWidget)
 
-from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_RECEIVED, DEFAULT_CAMERA_KEY, DEFAULT_DELAY_MS,
+from cctv_wall.ai_feed import (ALIGN_AI_TIME, ALIGN_FRAME, DEFAULT_CAMERA_KEY, DEFAULT_DELAY_MS,
                                DEFAULT_TIME_KEY, MAX_DELAY_MS, AiFeedConfig)
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
@@ -298,18 +298,22 @@ class AiFeedsDialog(QDialog):
         self._delay.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
         delay = QHBoxLayout()
         delay.addWidget(self._delay, 1)
+        self._delay_widgets: list[QWidget] = [self._delay]
         for text, step in (("−", self._delay.stepDown), ("＋", self._delay.stepUp)):
             button = QPushButton(text)
             button.setFixedWidth(40)
             button.clicked.connect(step)
             delay.addWidget(button)
-        form.addRow(self._translator.t("ai_host"), address)
-        form.addRow(self._translator.t("ai_delay"), delay)
+            self._delay_widgets.append(button)
         self._align = QComboBox()
-        self._align.addItem(self._translator.t("ai_align_ai_time"), ALIGN_AI_TIME)
-        self._align.addItem(self._translator.t("ai_align_received"), ALIGN_RECEIVED)
+        self._align.addItem(self._translator.t("ai_align_frame"), ALIGN_FRAME)
+        # Stored "received" connections also show as manual; _store_current keeps their value.
+        self._align.addItem(self._translator.t("ai_align_manual"), ALIGN_AI_TIME)
         self._align.setToolTip(self._translator.t("ai_delay_help"))
+        self._align.currentIndexChanged.connect(self._refresh_delay_enabled)
+        form.addRow(self._translator.t("ai_host"), address)
         form.addRow(self._translator.t("ai_align"), self._align)
+        form.addRow(self._translator.t("ai_delay"), delay)
 
         mapping = QGroupBox(self._translator.t("ai_camera_map"))
         mapping_box = QVBoxLayout(mapping)
@@ -419,7 +423,8 @@ class AiFeedsDialog(QDialog):
         self._host.setText(form.host)
         self._port.setText(form.port)
         self._delay.setValue(form.delay_ms)
-        self._align.setCurrentIndex(max(self._align.findData(form.align), 0))
+        self._align.setCurrentIndex(0 if form.align == ALIGN_FRAME else 1)
+        self._refresh_delay_enabled()
         self._table.setRowCount(0)
         for source, camera in form.mapping:
             self._add_row(source, camera)
@@ -441,11 +446,20 @@ class AiFeedsDialog(QDialog):
             if self._table.cellWidget(row, 2).rule:
                 filters[source.strip()] = self._table.cellWidget(row, 2).rule
         tile_key = self._tile_rows.key()
+        align = self._align.currentData()
+        if align != ALIGN_FRAME and self._forms[self._current].align != ALIGN_FRAME:
+            align = self._forms[self._current].align   # a calibrated "received" keeps its anchor
         self._forms[self._current] = FeedForm(self._host.text().strip(), self._port.text().strip(),
                                               self._delay.value(), rows,
                                               self._advanced.toPlainText(), tile_key,
                                               self._tile_rows.values() if tile_key else [],
-                                              self._align.currentData() or ALIGN_AI_TIME, filters)
+                                              align, filters)
+
+    def _refresh_delay_enabled(self) -> None:
+        """Matched to the frame timestamps, a result needs no delay to line up."""
+        manual = self._align.currentData() != ALIGN_FRAME
+        for widget in self._delay_widgets:
+            widget.setEnabled(manual)
 
     def _refresh_current_label(self) -> None:
         if self._current is not None:

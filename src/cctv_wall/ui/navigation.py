@@ -4,19 +4,45 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QTreeWidgetItem, QVBoxLayout)
 
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Camera, Site, Workspace
+from cctv_wall.models import Camera, Workspace
 from cctv_wall.ui.flat_tree import FlatTree
 
 # (site name, camera index) — the camera index is None on a site row.
 ItemReference = tuple[str, "int | None"]
 
 
+# Every site in its new place, each with its cameras listed by their present index. Only the
+# order travels: the list's copy of the workspace can be older than the window's (the site on
+# screen, a stream switched from a tile), and handing the whole copy back would undo those.
+Order = tuple[tuple[str, tuple[int, ...]], ...]
+
+
+def apply_order(workspace: Workspace, order: Order) -> Workspace | None:
+    """The workspace in this order with every other setting untouched; None when the order no
+    longer fits it."""
+    sites = []
+    for name, indices in order:
+        site = workspace.site(name)
+        if site is None or sorted(indices) != list(range(len(site.cameras))):
+            return None
+        sites.append(site.with_cameras([site.cameras[index] for index in indices]))
+    return workspace.with_sites(sites) if len(sites) == len(workspace.sites) else None
+
+
 def _reference(item: QTreeWidgetItem) -> ItemReference:
     return item.data(0, Qt.ItemDataRole.UserRole)
+
+
+def _camera_rows(item: QTreeWidgetItem) -> list[QTreeWidgetItem]:
+    """The camera itself, or every camera of a site row."""
+    if item.parent() is not None:
+        return [item]
+    return [item.child(index) for index in range(item.childCount())]
 
 
 class _SiteTree(FlatTree):
@@ -24,12 +50,16 @@ class _SiteTree(FlatTree):
 
     def __init__(self, on_reorder: Callable[[], None],
                  on_reselect: Callable[[QTreeWidgetItem], None],
-                 on_pick: Callable[[QTreeWidgetItem], None]) -> None:
+                 on_pick: Callable[[QTreeWidgetItem], None],
+                 on_pick_range: Callable[[QTreeWidgetItem, QTreeWidgetItem], None]) -> None:
         super().__init__()
         self._on_reorder = on_reorder
         self._on_reselect = on_reselect
         self._on_pick = on_pick
+        self._on_pick_range = on_pick_range
         self._pressed_current: QTreeWidgetItem | None = None
+        # Where a Shift+click range starts: the row clicked last, with or without Ctrl.
+        self._anchor: QTreeWidgetItem | None = None
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
@@ -40,15 +70,23 @@ class _SiteTree(FlatTree):
 
     def mousePressEvent(self, event) -> None:
         item = self.itemAt(event.position().toPoint())
-        picking = event.modifiers() & (Qt.KeyboardModifier.ControlModifier
-                                       | Qt.KeyboardModifier.ShiftModifier)
-        if (picking and item is not None and item.parent() is not None
-                and event.button() == Qt.MouseButton.LeftButton):
-            self._on_pick(item)   # Ctrl/Shift+click a camera: add it to, or drop it from, the pick
-            event.accept()
-            return
+        modifiers = event.modifiers()
+        if item is not None and event.button() == Qt.MouseButton.LeftButton:
+            if modifiers & Qt.KeyboardModifier.ShiftModifier:
+                self._on_pick_range(self._anchor or self.currentItem() or item, item)
+                event.accept()
+                return
+            self._anchor = item
+            if modifiers & Qt.KeyboardModifier.ControlModifier:
+                self._on_pick(item)
+                event.accept()
+                return
         self._pressed_current = item if item is not None and item is self.currentItem() else None
         super().mousePressEvent(event)
+
+    def clear(self) -> None:
+        self._anchor = None   # its row is about to be deleted
+        super().clear()
 
     def mouseReleaseEvent(self, event) -> None:
         # currentItemChanged stays silent when the selected row is clicked again, so that
@@ -91,10 +129,13 @@ class SiteNavigation(QFrame):
                  on_settings_requested: Callable[[], None],
                  on_site_action: Callable[[str, str], None], translator: Translator,
                  on_camera_selected: Callable[[str, Camera], None],
-                 on_reorder: Callable[[Workspace], None],
+                 on_reorder: Callable[[Order], None],
                  on_camera_action: Callable[[str, str, int], None],
-                 on_cameras_picked: Callable[[tuple[tuple[str, int], ...]], None]) -> None:
+                 on_cameras_picked: Callable[[tuple[tuple[str, int], ...]], None],
+                 on_delete: Callable[[tuple[str, ...], tuple[ItemReference, ...]], None]
+                 = lambda _sites, _cameras: None) -> None:
         super().__init__()
+        self._on_delete = on_delete
         self.setObjectName("siteNavigation")
         self.setMinimumWidth(160)
         self._on_site_selected = on_site_selected
@@ -126,11 +167,17 @@ class SiteNavigation(QFrame):
         section.addWidget(self._count)
         layout.addLayout(section)
         self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item),
-                                self._pick)
+                                self._pick, self._pick_range)
         self._sites.setObjectName("siteList")
         self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
+        for keys, action in (("Delete", self._delete_selected),
+                             ("Alt+Up", lambda: self._move_selected(-1)),
+                             ("Alt+Down", lambda: self._move_selected(1))):
+            shortcut = QShortcut(QKeySequence(keys), self._sites)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(action)
         layout.addWidget(self._sites, 1)
         # Two plain entries instead of one "manage" button: someone looking for the AI
         # connections should not have to guess that they live behind a right-click.
@@ -181,15 +228,90 @@ class SiteNavigation(QFrame):
             self._on_camera_selected(site_name, camera)
 
     def _pick(self, item: QTreeWidgetItem) -> None:
-        """Toggle one camera in the set to watch; the set may span several sites."""
-        selected = self._sites.selectedItems()
-        for other in selected:
-            if other.parent() is None:
-                other.setSelected(False)   # a site row is a place, not a camera to watch
-        item.setSelected(item not in selected)
-        picked = sorted(self._sites.selectedItems(),
+        """Ctrl+click: toggle one camera, or every camera of a site, in the selection; it may
+        span several sites. Only selects — the right-click menu plays them together."""
+        cameras = _camera_rows(item)
+        adding = not all(row.isSelected() for row in cameras)
+        for row in self._sites.selectedItems():
+            if row.parent() is None:
+                row.setSelected(False)   # a site row is a place, not a camera to watch
+        for row in cameras:
+            row.setSelected(adding)
+
+    def _pick_range(self, anchor: QTreeWidgetItem, item: QTreeWidgetItem) -> None:
+        """Shift+click: every camera from the anchor row to this one, in list order. A site row
+        brings all its cameras when it is an end of the range or collapsed (its cameras out of
+        sight); an expanded one in between adds only its camera rows that lie in the range."""
+        rows = [row for index in range(self._sites.topLevelItemCount())
+                for site in (self._sites.topLevelItem(index),)
+                for row in (site, *(site.child(child) for child in range(site.childCount())))]
+        first, last = sorted((rows.index(anchor), rows.index(item)))
+        self._sites.clearSelection()
+        for row in rows[first:last + 1]:
+            whole_site = row in (anchor, item) or not row.isExpanded()
+            for camera in _camera_rows(row) if row.parent() is not None or whole_site else ():
+                camera.setSelected(True)
+
+    def _selected_cameras(self) -> tuple[ItemReference, ...]:
+        picked = sorted((i for i in self._sites.selectedItems() if i.parent() is not None),
                         key=lambda i: (self._sites.indexOfTopLevelItem(i.parent()), _reference(i)[1]))
-        self._on_cameras_picked(tuple(_reference(i) for i in picked))
+        return tuple(_reference(i) for i in picked)
+
+    def _targets(self) -> tuple[tuple[str, ...], tuple[ItemReference, ...]]:
+        """(sites, cameras) that Del and Alt+arrows act on: the selected cameras, else the
+        current row. Ctrl on a site row selects its cameras, so sites go one at a time."""
+        cameras = self._selected_cameras()
+        current = self._sites.currentItem()
+        if cameras or current is None:
+            return (), cameras
+        site_name, index = _reference(current)
+        return ((site_name,), ()) if index is None else ((), ((site_name, index),))
+
+    def _delete_selected(self) -> None:
+        sites, cameras = self._targets()
+        if sites or cameras:
+            self._on_delete(sites, cameras)   # asked to confirm, and saved, by the window
+
+    def _move_selected(self, step: int) -> None:
+        """Alt+Up/Down: a site, or a block of cameras of one site, one row up or down. Saved at
+        once like a drag; the moved rows stay selected so the key can be pressed again."""
+        sites, cameras = self._targets()
+        order = [(site.name, tuple(range(len(site.cameras)))) for site in self._workspace.sites]
+        if sites:
+            index = self._workspace.site_names.index(sites[0])
+            if not 0 <= index + step < len(order):
+                return
+            order[index], order[index + step] = order[index + step], order[index]
+            self._on_reorder(tuple(order))
+            self._select_rows({(sites[0], None)})
+            return
+        if not cameras or len({site_name for site_name, _index in cameras}) != 1:
+            return   # cameras only move inside their own site; that belongs in the editor
+        site_name = cameras[0][0]
+        position = self._workspace.site_names.index(site_name)
+        indices = [index for _site_name, index in cameras]
+        moved = list(order[position][1])
+        if indices[0] + step < 0 or indices[-1] + step >= len(moved):
+            return
+        # The leading edge swaps first, so the block slides by one without reordering itself.
+        for index in reversed(indices) if step > 0 else indices:
+            moved[index], moved[index + step] = moved[index + step], moved[index]
+        order[position] = (site_name, tuple(moved))
+        self._on_reorder(tuple(order))
+        self._select_rows({(site_name, index + step) for index in indices})
+
+    def _select_rows(self, references: set[ItemReference]) -> None:
+        """Select rows of the rebuilt tree quietly: selecting is not choosing what to watch."""
+        blocked = self._sites.blockSignals(True)
+        self._sites.clearSelection()
+        for index in range(self._sites.topLevelItemCount()):
+            site = self._sites.topLevelItem(index)
+            for row in (site, *(site.child(child) for child in range(site.childCount()))):
+                if tuple(_reference(row)) in references:
+                    if row.parent() is None:
+                        self._sites.setCurrentItem(row)
+                    row.setSelected(True)
+        self._sites.blockSignals(blocked)
 
     def clear_picks(self) -> None:
         """The wall shows the whole site again, so its row is the one selected; the next
@@ -207,33 +329,30 @@ class SiteNavigation(QFrame):
         return site.cameras[index] if site and index < len(site.cameras) else None
 
     def _apply_reorder(self) -> None:
-        self._on_reorder(self._reordered_workspace())
-
-    def _reordered_workspace(self) -> Workspace:
-        """Read the new order off the tree, keeping every camera's own settings."""
-        sites: list[Site] = []
-        for index in range(self._sites.topLevelItemCount()):
-            item = self._sites.topLevelItem(index)
-            site = self._workspace.site(_reference(item)[0])
-            if site is None:
-                continue
-            cameras = [self._camera(*_reference(item.child(row)))
-                       for row in range(item.childCount())]
-            sites.append(site.with_cameras([c for c in cameras if c is not None]))
-        return self._workspace.with_sites(sites)
+        """Read the dragged order off the tree: each row still carries its original index."""
+        self._on_reorder(tuple(
+            (_reference(site)[0], tuple(_reference(site.child(row))[1] for row in range(site.childCount())))
+            for site in map(self._sites.topLevelItem, range(self._sites.topLevelItemCount()))))
 
     def _show_context_menu(self, position) -> None:
         item = self._sites.itemAt(position)
         if item is None:
             return
-        self._sites.setCurrentItem(item)
+        selected = self._selected_cameras()
+        together = len(selected) > 1 and item.isSelected()
+        if not together:
+            self._sites.setCurrentItem(item)
         site_name, camera_index = _reference(item)
         # Parented to the top-level window: libvlc makes this panel a native child, and a
         # popup with a native child as its transient parent triggers a Qt warning.
         menu = QMenu(self.window())
         menu.setMinimumWidth(200)
-        # A click already watches a site or enlarges a camera, so the menu only edits.
-        if camera_index is None:
+        # A click already watches a site or enlarges a camera, so the menu only edits — or,
+        # on a selection of several cameras, plays them together.
+        if together:
+            play = menu.addAction(self._translator.t("play_together", count=len(selected)))
+            play.triggered.connect(lambda _checked=False: self._on_cameras_picked(selected))
+        elif camera_index is None:
             self._add_action(menu, self._translator.t("add_camera_action"), "add_camera", site_name)
             self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
             self._add_action(menu, self._translator.t("rename"), "rename", site_name)

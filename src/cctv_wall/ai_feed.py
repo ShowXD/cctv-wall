@@ -31,11 +31,13 @@ CLOCK_SKEW_WARNING_SECONDS = 2.0
 # 數值大於這個值的 epoch 視為毫秒（1e11 秒已是西元 5138 年）。
 _EPOCH_MILLISECONDS_THRESHOLD = 1e11
 
-# 對齊方式：依 AI 時間＝AI 送來的時間＋延遲才顯示，不受 AI 端處理快慢影響（需兩端校時）；
+# 對齊方式：畫面時間＝攝影機畫面播到 AI 時間那一刻顯示，不用延遲，需要嚴格同步（主視窗會自動開啟）；
+# 依 AI 時間＝AI 送來的時間＋手動延遲，不受 AI 端處理快慢影響（需兩端校時）；
 # 依收到時間＝收到後延遲才顯示。設定檔沒有這個欄位時依收到時間，已校準的延遲不會位移。
+ALIGN_FRAME = "frame"
 ALIGN_AI_TIME = "ai_time"
 ALIGN_RECEIVED = "received"
-ALIGN_MODES = (ALIGN_AI_TIME, ALIGN_RECEIVED)
+ALIGN_MODES = (ALIGN_FRAME, ALIGN_AI_TIME, ALIGN_RECEIVED)
 
 STATUS_CONNECTED = "connected"
 STATUS_RECONNECTING = "reconnecting"
@@ -321,24 +323,38 @@ def _labelled(value: Any, labels: dict[str, dict[str, str]]) -> Any:
     return value
 
 
-def due_at(event: AiEvent, config: AiFeedConfig) -> float:
-    """這筆結果該顯示的時刻。依 AI 時間時，沒有時間或兩端時鐘相差太大（未校時）就退回收到時間，
-    否則一筆時間錯亂的結果會一直卡著或立刻冒出來。"""
-    anchor = event.received_at
+def due_at(event: AiEvent, config: AiFeedConfig, frame_lag: float | None = None) -> float:
+    """這筆結果該顯示的時刻（本機時間）。
+
+    畫面時間：frame_lag 是那台攝影機畫面上這一格比它的拍攝時間晚多少秒（以攝影機自己的
+    時鐘量，只有嚴格同步拿得到），結果在畫面播到 AI 時間那一刻顯示，兩邊直接比時間戳，
+    本機時鐘準不準也無關。拿不到（攝影機還沒送 RTCP 報告、不在畫面上、沒有 AI 時間），
+    或 AI 端與攝影機時鐘差到要等超過延遲上限時，對不上就收到即顯示，不讓結果卡住。
+    依 AI 時間：沒有時間或兩端時鐘相差太大（未校時）退回收到時間，否則一筆時間錯亂的
+    結果會一直卡著或立刻冒出來。"""
+    if config.align == ALIGN_FRAME:
+        if event.event_time is not None and frame_lag is not None:
+            shown_at = event.event_time + frame_lag
+            if shown_at - event.received_at <= MAX_DELAY_MS / 1000:
+                return shown_at
+        return event.received_at
     if (config.align == ALIGN_AI_TIME and event.event_time is not None
             and not event.has_clock_skew):
-        anchor = event.event_time
-    return anchor + config.delay_ms / 1000
+        return event.event_time + config.delay_ms / 1000
+    return event.received_at + config.delay_ms / 1000
 
 
-def release_due(pending: deque[AiEvent], now: float, config: AiFeedConfig) -> list[AiEvent]:
-    """取出已到顯示時刻的事件，讓文字與晚到的畫面同時出現。
+def release_due(pending: deque[AiEvent], now: float, config: AiFeedConfig,
+                frame_lag: Callable[[str], float | None] = lambda _camera_label: None,
+                ) -> list[AiEvent]:
+    """取出已到顯示時刻的事件，讓文字與晚到的畫面同時出現。frame_lag 依攝影機標籤查詢，
+    見 due_at。
 
     只看隊首：pending 依接收順序排列，同一條連線的顯示時刻大致遞增。依 AI 時間對齊時，
     時間錯亂而退回收到時間的那一筆會讓後面幾筆最多晚到它的時刻才顯示；換來的是每次
     計時都不必掃描整個佇列。"""
     due = []
-    while pending and due_at(pending[0], config) <= now:
+    while pending and due_at(pending[0], config, frame_lag(pending[0].camera_label)) <= now:
         due.append(pending.popleft())
     return due
 

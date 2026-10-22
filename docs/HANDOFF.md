@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-10-19（介面改版與功能精簡）
+> 最後更新：2026-10-22（設定視窗、AI 對齊、主畫面多選與版面記憶，已合併 main 並推送）
 
 ---
 
@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 220 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 237 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **220 passed**（2026-10-21，`main`，`uv run --group dev pytest -q`） |
+| 測試 | **237 passed**（2026-10-22，`main`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -39,9 +39,134 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-22：版面記憶與一鍵回復、攝影機狀態可選角落（分支 `fix/editor-add-button`，已合併 main）
+
+**狀態：已實作、已驗證，已合併 main 並推送。**
+- 使用者要狀態文字預設右下角、可選位置或拖曳吸附。拖曳做不到：文字是 libvlc marquee 畫在原生影像視窗裡，
+  Qt 收不到那塊的滑鼠事件，也無法在原生視窗上疊 Qt 元件。改成四角擇一（`Player.show_overlay(text, corner)`，
+  VLC marquee Position 5/6/9/10），工具列長條圖按鈕改 `MenuButtonPopup`，箭頭選角落（objectName `compactMenuAction`）。
+- `Workspace` 新增（設定檔皆可省略，舊檔照讀）：`ai_panel_width`／`ai_panel_visible`、`stats_visible`／`stats_corner`、
+  `tile_layouts`（`{"3x3": {"rows": [...], "columns": [...]}}`，壞的項目略過）。`with_default_layout()` 回復這些與側欄，
+  視窗大小位置不動。工具列新增四格圖示 → `MainWindow._reset_layout`（不重新連線）。
+- 影像格比例：放開拖曳即存（`WallView.on_layout_changed`）；`_GridSplitter` 記住比例並在 resize 時重新套用
+  （QSplitter 原本依 stretch 分配增減的空間，重開時視窗尚未到最終大小就套用會走樣，實測 0.17 變 0.23）。
+  有存比例的形狀，開啟時不做「調成 16:9」（`video_surface_size` 回 None），否則依第一格大小算出的視窗會縮小。
+- AI 側欄寬度在關閉時存（與側欄相同時機），顯示與否在切換時存。
+- 檢查：pytest 237 passed（新增 `TestLayoutPreference` 3 項）、ruff 無問題、`--dry-run` 0；smoke（`MainWindow` dry-run）：
+  拖曳後關閉重開（同視窗大小）列高／欄寬、側欄 340、狀態開啟與左上角全部一致；較小視窗重開時只受最小尺寸影響；
+  回復預設後平均分配、側欄 260、狀態關閉右下角、`tile_layouts` 清空；有 AI 連線時 AI 側欄寬度與隱藏狀態會記住。
+  工具列截圖確認長條圖按鈕與箭頭不擠。
+- 未用實際攝影機確認 marquee 四個角落的位置（VLC 參數依 libvlc 文件）。
+
+---
+
+## 2026-10-22：主畫面清單 Alt+↑↓ 整段移動、Del 刪除；修正拖曳排序蓋掉較新的設定（分支 `fix/editor-add-button`，已合併 main）
+
+**狀態：已實作、已驗證，已合併 main 並推送。**
+- `SiteNavigation`：`Alt+Up/Down` 移動選取的攝影機（同一地點才動）或目前的地點，移動後重新選取；`Del` 把
+  (地點, 攝影機) 交給視窗 `_delete_from_list` → `site_commands.delete_items`：一次確認列出全部項目（最多 15 筆＋…），
+  確認後經 `_apply_site_command` 存檔（主畫面立即存檔、沒有取消，所以這個確認不能省）。
+- 修正（既有 bug）：清單排序原本把清單自己那份 workspace 整份交回視窗，而清單的那份不會隨「目前地點」「每頁格數」
+  「側欄寬度」「右鍵切換串流」等更新，拖曳後這些會被舊值蓋掉（實測：換到 S3 再移動地點，畫面跳回 S1）。
+  現在清單只送順序 `Order`（地點名＋攝影機原索引），視窗用 `navigation.apply_order` 套到自己的 workspace；
+  順序和現況對不上時不做任何事。`_on_sites_reordered` 也改走 `_apply_site_command`，只有畫面上的地點變了才重載影像。
+- 檢查：pytest 234 passed（新增移動、刪除、`apply_order` 共 5 項）、ruff 無問題、`--dry-run` 0；smoke（`MainWindow`
+  dry-run）：Alt+↑ 兩台整段上移且影像順序跟著變、頂端再按不動、換到 S3 再移動地點畫面仍是 S3、Del 確認後刪除並存檔。
+
+---
+
+## 2026-10-22：AI 只連畫面上攝影機的連線、每格顏色不重複（分支 `fix/editor-add-button`，已合併 main）
+
+**狀態：已實作、已驗證，已合併 main 並推送。**
+- `MainWindow._ai_sites`：被看的地點只保留對照表含「本頁畫面上攝影機」的連線（放大單台時只算那一台）；
+  沒有對照表的連線一律保留。`_cameras_on_page` 以放大前的頁碼計算。放大／還原時也呼叫 `_watch_ai`
+  （AI 側欄只增減有變的連線）。嚴格同步／時間戳後端的判斷仍看整個地點（`_watched_sites`），放大時不會換播放後端。
+- 顏色：`AiEventPanel.watch(sites, shown)`，本頁的格子依序先分配顏色；本頁超過 8 格改用黃金比例分散色相
+  （`_camera_colour`），36 格內不重複。原本是依地點全部攝影機的索引取 8 色循環，9 格必定重複。
+- 檢查：pytest 229 passed（新增顏色測試）、ruff 無問題；smoke（9 地點各 2 台、每台一條連線）：整個 S1 → 2 條、
+  跨 9 地點各選 1 台 → 9 條且 9 色不同、放大一台 → 1 條、還原 → 9 條。
+
+---
+
+## 2026-10-22：影像間隔可拖曳、AI 連線狀態與頂部地點可收合（分支 `fix/editor-add-button`，已合併 main）
+
+**狀態：已實作、已用腳本與截圖驗證，已合併 main 並推送。**
+- `WallView` 的 `QGridLayout` 改成垂直 `QSplitter`（列）內含每列一個水平 `QSplitter`（`objectName=wallGrid`）。
+  拖某列的欄邊界由 `_align_columns` 套到其他列；最後一列不足欄數時補空白 `QWidget` 讓欄對齊。
+  `setOpaqueResize(False)`：放開才調整，拖曳中不會每一步都重設所有原生影像視窗的大小（遠端桌面／低階電腦）。
+  先把整個 splitter 掛上視窗才呼叫 `surface.winId()`，避免原生視窗重新掛載而換掉 handle。放大單格改成隱藏其他列與格。
+  尺寸不記住，換頁回到平均。間隔固定 6px（填滿畫面時原本是 2px，現在一樣 6px）。
+- 畫格下方 AI 結果條沒有改成自動換行：換行會隨每筆結果改變高度、連帶重設原生影像視窗大小；改用拖曳放大格子，tooltip 仍有全文。
+- AI 側欄連線狀態超過 `STATUS_LINES_SHOWN`（3）條時收合成「已連線 x/y 條 ▾」，點擊展開／收合。
+- 頂部列 `ControlBar.show_status` 改收地點名稱 tuple：兩個以上收合成「1N1 等 n 個地點 ▾」，點擊展開，tooltip 為完整清單。
+- 檢查：pytest 228 passed、ruff 無問題；smoke（`MainWindow` dry-run、5 地點 10 條連線）：拖第一列欄邊界後兩列欄寬一致
+  （870／470），標題與連線狀態收合／展開正確，截圖確認。
+
+---
+
+## 2026-10-22：主畫面地點清單的 Ctrl／Shift 多選＋右鍵同時播放（分支 `fix/editor-add-button`，已合併 main）
+
+**狀態：已實作、已測試，已合併 main 並推送。**
+- 原本 Ctrl 與 Shift 都只是「點攝影機加選／取消」，點地點列沒有作用。改成和設定視窗一致：
+  `Ctrl`＋點攝影機逐一切換、`Ctrl`＋點地點列切換該地點全部攝影機；`Shift`＋點選取錨點（上一次點的列）到這一列
+  之間的攝影機，範圍兩端或收合的地點列帶入全部攝影機，中間展開的地點只算範圍內的攝影機列。
+  點選只改選取，不再立刻換畫面：在選取的攝影機上右鍵選「同時播放（N 台）」（`play_together`）才呼叫
+  `on_cameras_picked`；右鍵點在多選範圍內時不會改掉選取，也不會出現單台的編輯／刪除。
+  （`ui/navigation.py` 的 `_pick`／`_pick_range`／`_selected_cameras`、`_show_context_menu`）
+- 檢查：pytest 228 passed（新增 `TestSitePicking` 3 項）、ruff 無問題。測試裡換掉 `QMenu.exec` 要用 Python 子類別，
+  `mock.patch.object(QMenu, "exec")` 不生效，選單會真的開啟而卡住。
+
+---
+
+## 2026-10-22：AI 結果與畫面時間戳一致（GStreamer 各自播放）／手動延遲（分支 `fix/editor-add-button`，已合併 main）
+
+**狀態：已實作、已用 Demo 攝影機驗證播放與時間戳讀取；未接實際 AI 驗證，已合併 main 並推送。**
+- 使用者回報「依 AI 時間」沒有真的對齊：原本只是 AI 時間＋固定 `delay_ms` 對本機時鐘，完全沒看攝影機畫面。
+  使用者要兩種：①畫面與 AI 時間一致（每台攝影機各自等到畫面播到 AI 時間）②手動延遲，不強制任何模式。
+- VLC（libvlc 3）不提供畫面的拍攝時間，只有相對播放時間；GStreamer 每張畫面帶 RTCP/NTP 時間：
+  `rtspsrc add-reference-timestamp-meta=true`，從 sink 的 `last-sample` 讀 `timestamp/x-ntp` meta。
+  `Player.frame_lag()`＝本機現在減去畫面上那一格的拍攝時間（攝影機時鐘）；少數畫面沒有 meta 沿用上一次的值；
+  VLC 回 None，`NullPlayer` 回 `self.lag`。
+- `align="frame"`（`ai_feed.ALIGN_FRAME`）：`due_at`＝`event_time + frame_lag`；沒有 frame_lag／AI 時間、或要等超過
+  `MAX_DELAY_MS` 時收到即顯示。`ai_time`／`received` 行為不變。`release_due` 帶每台攝影機的查詢函式，
+  `AiEventPanel(frame_lag=…)` → `WallView.frame_lag(camera)`。
+- 播放後端改由 `MainWindow._use_backend(strict, timestamps)` 決定：嚴格同步 → GStreamer 同步；畫面上的地點有
+  `frame` 連線 → `GStreamerSyncPlayerFactory(synchronized=False)`（latency 1000、無 ntp-sync／ts-offset、各格獨立重連）；
+  其餘 → VLC。`_show_current_page` 每次確認，種類相同不動作；GStreamer 載入失敗只警告一次（`_timestamps_unavailable`）。
+  嚴格同步開關不受影響。`_factory_builder` 的 build 多一個 `timestamps` 參數。
+- 對話框對齊方式只剩兩項：與畫面時間戳一致（延遲欄與 −／＋ 停用）、手動調整顯示延遲；舊的 `received`
+  顯示為手動且存回 `received`（不讓現場已校準的延遲位移），從 frame 改成手動存為 `ai_time`。
+  主題原本沒有 disabled 樣式（停用的欄位看起來和可編輯一樣），兩套主題補上按鈕／輸入框的 disabled 灰階。
+- 實驗（Demo 兩台）：不同步、latency 1000 的管線仍有 meta；兩格 frame_lag 穩定（約 3.6 s 與 1.3 s，差異來自
+  兩台攝影機時鐘本身不同，sync_probe 的 SR 也顯示其中一台慢數秒）。第一個 SR 前的 meta 是依本機時間推估。
+- 限制：需要 AI 時間與攝影機時鐘一致（AI 時間就是畫面拍攝時間，或同一台 NTP）；`created` 是拍攝時間還是
+  AI 產生時間仍待使用者確認，若是後者結果會晚約 AI 處理時間，目前沒有往前微調。GStreamer 模式沒有狀態數字。
+- 檢查：pytest 225 passed（新增 frame 對齊 3 項、管線模式 2 項）、ruff 無問題、`--dry-run` 0；
+  smoke（`MainWindow`＋真的 builder＋Demo）：frame 連線 → GStreamer 非同步、兩格 frame_lag 有值；
+  嚴格同步開／關正常切換；改回手動連線 → VLC；對話框 frame 時延遲停用、舊 `received` 保留。
+- **已知問題（使用者決定暫緩）**：現場回報 AI 結果常比畫面早出現、間隔可達約 3 秒（攝影機已確認有校時）。
+  原因未查；可能是 exe 不是這個版本、連線選的是手動延遲、`created` 格式（無時區時當本機時間，差超過 30 秒就收到即顯示）
+  或 `created` 早於畫面拍攝時間。繼續查需要一行 AI 原始訊息的 `created` 值與當時的對齊方式；
+  建議先在側欄每筆提示加上「依畫面時間戳／收到即顯示（原因）」以便現場判斷。
+- 下一步：使用者打包 exe，接實際 AI，比對畫面 OSD 時間與結果條。
+
+---
+
+## 2026-10-22：設定視窗改為確認／套用／取消、多選與快捷鍵（分支 `fix/editor-add-button`）
+
+**狀態：已實作、已驗證，已合併 main 並推送。**
+- 起因：現場回報「新增」會清掉剛輸入的網址（選地點時表單本來就是空白新攝影機，「新增」只做清空），使用者進一步要求整個視窗改成確認／套用／取消。
+- 新模型：`WorkspaceEditor` 持有工作副本 `_workspace` 與已套用的 `_applied`；新增、刪除、改名、排序、攝影機欄位、AI 連線都只改工作副本，`on_change` 只在套用／確認時呼叫。取消（含 Esc、×）直接捨棄，不再詢問。攝影機欄位的變更仍在套用前列出確認。
+- 點地點時右邊改為該地點攝影機的唯讀表（密碼遮罩），雙擊跳到該台；點攝影機才是欄位表單；多選時顯示選取數與操作說明。
+- 清單 ExtendedSelection：Shift 範圍、Ctrl 加選、Ctrl+A 全選；`Del` 刪除所選（地點與攝影機可混合）、`Alt+↑/↓` 整段移動（全為地點，或同一地點內的攝影機）、`F2` 改名、`Ctrl+N` 用 `camera_form.edit_camera` 小視窗新增攝影機。拿掉「新增」「刪除」按鈕，清單下方有一行操作提示。
+- i18n：新增 `confirm`、`apply`、`selection`、`selected_items`、`site_cameras`、`editor_hint`；移除不再使用的 `add`、`delete_site`、`unsaved_changes`。
+- 檢查：`uv run --group dev pytest -q` → 220 passed；腳本驗證地點表、Shift 範圍與 Ctrl 加選、Alt+↓ 整段移動、Del、Ctrl+N、套用後仍開著且只回傳一次、取消不回傳、確認後依新順序回傳並關閉。
+
+---
+
 ## 2026-10-21：移除 exe 啟動圖（分支 `fix/remove-splash`）
 
-**狀態：已合併 main，尚未推送；exe 待使用者重新打包確認。**
+**狀態：已合併 main 並推送；exe 待使用者重新打包確認。**
 - 使用者在 Win10 打包實測：PyInstaller `Splash` 反而更慢出現，還先閃一個白色空框。原因是它必須先解壓並啟動 Tcl/Tk 才能畫圖，單一 exe 的主要等待（解壓約 211 MB）它並沒有縮短。
 - 使用者選擇移除啟動圖、維持單一 exe：spec 拿掉 `Splash`，刪除 `assets/startup_splash.png` 與 `__main__._close_bootloader_splash`，註解與 BUILD／ARCHITECTURE／README 說明改回「解壓完才有進度小畫面」，並記錄不要再加回來。
 - 若之後要更快啟動，可改發佈資料夾版（不必每次解壓），需改 `build.py`。
@@ -51,7 +176,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-21：對話框截斷、攝影機狀態浮在影像上、跨地點選取、exe 啟動圖（已移除，見上一節）
 
-**狀態：已合併 main，尚未推送；exe 由使用者自行打包驗證。**
+**狀態：已合併 main 並推送；exe 由使用者自行打包驗證。**
 - AI 辨識連線對話框：
   - 「畫格下方顯示」橫排的種類被截成「公車 …」。原因是自繪勾選框沒算進項目寬度，現在逐項設定 `sizeHint`。
   - 攝影機對照的下拉選單改顯示 `short_camera_name`（未命名的顯示 IP），完整標籤放在 itemData 與 tooltip；「只顯示」欄依內容寬度。
@@ -82,7 +207,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-21：全專案翻修（分支 `refactor/cleanup`）
 
-**狀態：已合併 main（結構、效能、註解與文件三個 commit），尚未推送。** 目標：減輕低階電腦（常經遠端桌面觀看）的負擔、職責分明、註解只說明為什麼。
+**狀態：已合併 main（結構、效能、註解與文件三個 commit），已推送。** 目標：減輕低階電腦（常經遠端桌面觀看）的負擔、職責分明、註解只說明為什麼。
 行為不變；子碼流維持手動（使用者決定），文件原本就建議多格時把網址指向 `/stream2`。
 - 效能：
   - 畫格下方 AI 結果條同色連續亮著時不再重設樣式表、寬度不隨文字撐開畫格；

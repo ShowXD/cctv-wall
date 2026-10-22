@@ -12,6 +12,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QMainWindow, QMessageBox, QSplitter, QVBoxLayout, QWidget
 
 from cctv_wall import layout
+from cctv_wall.ai_feed import ALIGN_FRAME
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
@@ -23,7 +24,7 @@ from cctv_wall.ui.control_bar import ControlBar
 from cctv_wall.ui.editor import open_editor
 from cctv_wall.ui.frameless import FramelessGrips
 from cctv_wall.ui.logs import show_log_dialog
-from cctv_wall.ui.navigation import SiteNavigation
+from cctv_wall.ui.navigation import Order, SiteNavigation, apply_order
 from cctv_wall.ui.theme import apply_theme
 from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import WallView
@@ -75,6 +76,9 @@ class MainWindow(QMainWindow):
         self._resource_monitor = ResourceMonitor()
         self._usage: ProcessUsage | None = None
         self._factory_builder = build_factory
+        # (strict sync, frame timestamps) the current factory was built for.
+        self._backend = (False, False)
+        self._timestamps_unavailable = False
         self._factory = self._create_factory(workspace.strict_sync)
         self._focused_camera: Camera | None = None
         # Ctrl+clicked (site name, camera) pairs, from any sites; empty = the site on screen.
@@ -118,6 +122,7 @@ class MainWindow(QMainWindow):
         try:
             factory = self._factory_builder(strict_sync)
             logger().info("playback backend=%s", "strict-timestamp-sync" if strict_sync else "vlc")
+            self._backend = (strict_sync, False)
             return factory
         except PlaybackError as error:
             if strict_sync:
@@ -135,7 +140,8 @@ class MainWindow(QMainWindow):
         self._navigation = SiteNavigation(self._on_site_selected, self._open_settings,
                                           self._on_site_action, self._translator,
                                           self._on_camera_selected, self._on_sites_reordered,
-                                          self._on_camera_action, self._on_cameras_picked)
+                                          self._on_camera_action, self._on_cameras_picked,
+                                          self._delete_from_list)
         splitter.addWidget(self._navigation)
         self._ai_panel = AiEventPanel(
             self._translator,
@@ -144,10 +150,11 @@ class MainWindow(QMainWindow):
                 camera, text, colour, line),
             on_camera_chosen=self._on_camera_selected,
             on_connection_change=lambda connected, total: self._control_bar.show_ai_connection(
-                connected, total))
+                connected, total),
+            frame_lag=lambda camera: self._wall.frame_lag(camera))
         splitter.addWidget(self._monitor_panel())
         splitter.addWidget(self._ai_panel)
-        splitter.setSizes([self._workspace.sidebar_width, 1180, 300])
+        splitter.setSizes([self._workspace.sidebar_width, 1180, self._workspace.ai_panel_width])
         # A wider or narrower window changes the wall only; the side panels keep their width.
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -167,17 +174,63 @@ class MainWindow(QMainWindow):
             on_next_page=self._next_page, on_tiles_changed=self._on_tiles_changed,
             on_language=self._on_language_selected, on_theme=self._on_theme_selected,
             on_fill=self._toggle_window_maximized, on_strict_sync=self._toggle_strict_sync,
-            on_ai_panel=self._refresh_ai_panel,
-            on_stats=lambda visible: self._wall.set_stats_visible(visible),
+            on_ai_panel=self._on_ai_panel_toggled,
+            on_stats=self._on_stats_toggled, on_stats_corner=self._on_stats_corner,
+            on_reset_layout=self._reset_layout,
             on_reload=self._show_current_page,
             on_logs=self._show_logs)
         layout_box.addWidget(self._control_bar)
         self._wall = WallView(self._factory, self._workspace.tiles_per_page, self._translator,
                               on_focus=self._toggle_camera_focus,
                               on_health_change=self._refresh_status,
-                              on_stream_change=self._change_camera_stream)
+                              on_stream_change=self._change_camera_stream,
+                              on_layout_changed=self._on_tile_layout_changed)
+        self._wall.set_layouts({shape: (rows, columns)
+                                for shape, rows, columns in self._workspace.tile_layouts})
+        self._wall.set_stats_corner(self._workspace.stats_corner)
+        self._wall.set_stats_visible(self._workspace.stats_visible)
         layout_box.addWidget(self._wall, 1)
         return panel
+
+    def _on_ai_panel_toggled(self) -> None:
+        self._workspace = self._workspace.with_ai_panel(self._ai_panel_width(),
+                                                        self._control_bar.ai_panel_wanted)
+        self._persist()
+        self._refresh_ai_panel()
+
+    def _ai_panel_width(self) -> int:
+        """Like _sidebar_width: the splitter knows the dragged width only while it is shown."""
+        width = self._splitter.sizes()[2]
+        return width if self._ai_panel.isVisible() and width else self._workspace.ai_panel_width
+
+    def _on_stats_toggled(self, visible: bool) -> None:
+        self._workspace = self._workspace.with_stats(visible, self._workspace.stats_corner)
+        self._persist()
+        self._wall.set_stats_visible(visible)
+
+    def _on_stats_corner(self, corner: str) -> None:
+        self._workspace = self._workspace.with_stats(self._workspace.stats_visible, corner)
+        self._persist()
+        self._wall.set_stats_corner(corner)
+
+    def _on_tile_layout_changed(self, shape: str, rows: tuple[float, ...],
+                                columns: tuple[float, ...]) -> None:
+        """Saved as soon as a drag is released: a crash later must not lose the layout."""
+        self._workspace = self._workspace.with_tile_layout(shape, rows, columns)
+        self._persist()
+
+    def _reset_layout(self) -> None:
+        """One click back to the default layout; the cameras keep playing throughout."""
+        self._workspace = self._workspace.with_default_layout()
+        self._persist()
+        self._wall.set_layouts({})
+        self._wall.set_stats_corner(self._workspace.stats_corner)
+        self._wall.set_stats_visible(self._workspace.stats_visible)
+        self._control_bar.show_layout(self._workspace)
+        self._apply_view_mode()
+        total = sum(self._splitter.sizes())
+        side, ai = self._workspace.sidebar_width, self._workspace.ai_panel_width
+        self._splitter.setSizes([side, max(total - side - ai, 1), ai])
 
     def _toggle_wall_fullscreen(self) -> None:
         """Fullscreen the Qt shell, never the embedded VLC surface itself."""
@@ -275,12 +328,38 @@ class MainWindow(QMainWindow):
         self._show_current_page()
 
     def _show_current_page(self) -> None:
+        self._use_backend(self._workspace.strict_sync, self._needs_frame_timestamps)
         cameras = self._displayed_cameras
         self._page = layout.clamp_page(self._page, len(cameras), self._wall.tiles_per_page)
         self._wall.show_page(cameras, self._page)
-        self._ai_panel.watch(self._watched_sites)
-        self._refresh_ai_panel()
+        self._watch_ai()
         self._refresh_status()
+
+    def _watch_ai(self) -> None:
+        self._ai_panel.watch(self._ai_sites, self._cameras_on_page)
+        self._refresh_ai_panel()
+
+    @property
+    def _cameras_on_page(self) -> tuple[tuple[str, Camera], ...]:
+        """(site, camera) of every tile on the page, enlarged one or not."""
+        pairs = self._picked_cameras or tuple((self._active_site_name, camera) for camera in self._cameras)
+        page = self._page_before_focus if self._focused_camera is not None else self._page
+        return pairs[layout.page_slice(page, self._wall.tiles_per_page)]
+
+    @property
+    def _ai_sites(self) -> tuple[Site, ...]:
+        """The watched sites, each keeping only the AI connections that report a camera on
+        screen — just the enlarged one while a camera is enlarged. A connection without a
+        camera table cannot tell which cameras it covers, so it always stays."""
+        shown = [(site_name, camera) for site_name, camera in self._cameras_on_page
+                 if self._focused_camera in (None, camera)]
+        sites = []
+        for site in self._watched_sites:
+            labels = {camera.label for site_name, camera in shown if site_name == site.name}
+            feeds = tuple(feed for feed in site.ai_feeds
+                          if not feed.cameras or labels & {label for _id, label in feed.cameras})
+            sites.append(replace(site, ai_feeds=feeds))
+        return tuple(sites)
 
     def _refresh_ai_panel(self) -> None:
         """The panel and its toggle exist only for a site with an AI feed configured."""
@@ -293,7 +372,7 @@ class MainWindow(QMainWindow):
         total = len(self._displayed_cameras)
         visible = min(self._wall.tiles_per_page,
                       max(total - self._page * self._wall.tiles_per_page, 0))
-        self._control_bar.show_status(self._wall_title, self._wall.playing_count, visible,
+        self._control_bar.show_status(self._wall_site_names, self._wall.playing_count, visible,
                                       self._page, self._wall.page_count(total))
         self._control_bar.show_resources(self._usage, self._wall.allocated_player_count)
 
@@ -340,7 +419,7 @@ class MainWindow(QMainWindow):
         self._toggle_camera_focus(camera)
 
     def _on_cameras_picked(self, picks: tuple[tuple[str, int], ...]) -> None:
-        """Ctrl+clicked cameras, from any sites: two or more fill the wall on their own, one is
+        """Cameras selected in the list and played together from its menu, from any sites: two or more fill the wall on their own, one is
         enlarged, none puts the site on screen back. Nothing is saved; a site row, a plain
         click or Esc ends it."""
         self._exit_camera_focus_if_needed()
@@ -375,9 +454,9 @@ class MainWindow(QMainWindow):
         return (self._site,) if self._site is not None else ()
 
     @property
-    def _wall_title(self) -> str:
-        names = [site.name for site in self._watched_sites] or [self._active_site_name]
-        return self._translator.t("list_separator").join(names)
+    def _wall_site_names(self) -> tuple[str, ...]:
+        names = tuple(site.name for site in self._watched_sites) or (self._active_site_name,)
+        return tuple(name for name in names if name)
 
     def _clear_picked_cameras(self) -> None:
         if self._picked_cameras:
@@ -386,13 +465,17 @@ class MainWindow(QMainWindow):
             self._page = 0
             self._show_current_page()
 
-    def _on_sites_reordered(self, workspace: Workspace) -> None:
-        """Persist a drag immediately; the wall only reloads when the order really changed."""
-        if workspace == self._workspace:
-            return
-        self._workspace = workspace
-        self._persist()
-        self._reload_sites()
+    def _on_sites_reordered(self, order: Order) -> None:
+        """Persist a drag or an Alt+arrow move immediately; the wall reloads only when the site
+        on screen changed."""
+        updated = apply_order(self._workspace, order)
+        if updated is not None and updated != self._workspace:
+            self._apply_site_command(updated)
+
+    def _delete_from_list(self, site_names: tuple[str, ...],
+                          cameras: tuple[tuple[str, int], ...]) -> None:
+        self._apply_site_command(site_commands.delete_items(self, self._workspace, self._translator,
+                                                            site_names, cameras))
 
     def _on_site_action(self, action: str, site_name: str) -> None:
         """Route a navigation shortcut, keeping this window the only workspace owner.
@@ -513,30 +596,52 @@ class MainWindow(QMainWindow):
     def _show_logs(self) -> None:
         show_log_dialog(self, self._translator, self._cameras)
 
+    @property
+    def _needs_frame_timestamps(self) -> bool:
+        """A feed matched to the frame timestamps needs GStreamer: VLC cannot tell when a
+        frame was captured."""
+        return not self._timestamps_unavailable and any(
+            feed.align == ALIGN_FRAME for site in self._watched_sites for feed in site.ai_feeds)
+
     def _toggle_strict_sync(self, enabled: bool) -> None:
         if not self._set_strict_sync(enabled):
             self._control_bar.set_sync(self._workspace.strict_sync)
 
     def _set_strict_sync(self, enabled: bool) -> bool:
-        """Swap the wall's backend; a missing GStreamer runtime leaves the current one in place."""
         if enabled == self._workspace.strict_sync:
             return True
+        if not self._use_backend(enabled, self._needs_frame_timestamps):
+            return False
+        self._workspace = self._workspace.with_strict_sync(enabled)
+        self._control_bar.set_sync(enabled)
+        self._persist()
+        logger().info("strict timestamp sync %s", "enabled" if enabled else "disabled")
+        self._show_current_page()
+        return True
+
+    def _use_backend(self, strict_sync: bool, timestamps: bool) -> bool:
+        """Swap the wall's backend; a missing GStreamer runtime leaves the current one in place.
+        Strict sync already reports frame timestamps."""
+        backend = (strict_sync, timestamps and not strict_sync)
+        if backend == self._backend:
+            return True
         try:
-            new_factory = self._factory_builder(enabled)
+            new_factory = self._factory_builder(*backend)
         except PlaybackError as error:
             # A dialog the operator dismisses leaves no trace; the log has to keep one.
-            logger().warning("strict sync refused: %s", error)
+            logger().warning("playback backend refused: %s", error)
+            if backend[1]:
+                # Every page of such a site would ask again; one warning is enough.
+                self._timestamps_unavailable = True
             QMessageBox.warning(self, self._translator.t("sync_diagnostics"), str(error))
             return False
         self._wall.stop()
         old_factory, self._factory = self._factory, new_factory
         self._wall.configure(new_factory, self._workspace.tiles_per_page)
         old_factory.shutdown()
-        self._workspace = self._workspace.with_strict_sync(enabled)
-        self._control_bar.set_sync(enabled)
-        self._persist()
-        logger().info("strict timestamp sync %s", "enabled" if enabled else "disabled")
-        self._show_current_page()
+        self._backend = backend
+        logger().info("playback backend=%s", "strict-timestamp-sync" if strict_sync
+                      else "gstreamer-timestamps" if backend[1] else "vlc")
         return True
 
     def _change_camera_stream(self, camera: Camera, stream: int) -> None:
@@ -569,7 +674,7 @@ class MainWindow(QMainWindow):
         self._apply_workspace_change(before)
 
     def _on_workspace_edited(self, workspace: Workspace) -> None:
-        """Every committed change, Save of camera drafts included, is persisted at once; the wall
+        """套用 and 確認 in the settings window land here and are persisted at once; the wall
         waits until the dialog closes."""
         self._workspace = workspace
         self._persist()
@@ -597,6 +702,7 @@ class MainWindow(QMainWindow):
             self._page_before_focus = self._page
             self._focused_camera = camera
             self._page = 0
+        self._watch_ai()
         self._refresh_status()
 
     def _exit_camera_focus_if_needed(self) -> None:
@@ -626,7 +732,8 @@ class MainWindow(QMainWindow):
         if persist:
             self._workspace = self._workspace.with_geometry(
                 f"{self.width()}x{self.height()}+{self.x()}+{self.y()}").with_sidebar(
-                self._sidebar_width(), self._workspace.sidebar_visible)
+                self._sidebar_width(), self._workspace.sidebar_visible).with_ai_panel(
+                self._ai_panel_width(), self._workspace.ai_panel_visible)
             self._persist()
         self._ai_panel.stop()
         self._wall.stop()

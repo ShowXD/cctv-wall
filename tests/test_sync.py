@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 from cctv_wall import gst_sync, sync_probe
 
@@ -47,6 +48,54 @@ class TestRequiredElements:
 
     def test_one_h264_decoder_is_enough(self):
         assert _factory_with(_element_factory({"d3d11h264dec"})).missing_elements() == ()
+
+
+class _Element:
+    def __init__(self) -> None:
+        self.properties: dict[str, object] = {}
+
+    def set_property(self, key: str, value: object) -> None:
+        self.properties[key] = value
+
+    def link(self, _other: object) -> bool:
+        return True
+
+    def get_static_pad(self, _name: str) -> object:
+        return object()
+
+    def connect(self, *_arguments: object) -> None:
+        pass
+
+
+def _played(synchronized: bool) -> dict[str, _Element]:
+    """The properties play() sets on each element, through a stand-in GStreamer."""
+    elements: dict[str, _Element] = {}
+
+    def make(name: str, _label: object) -> _Element:
+        return elements.setdefault(name, _Element())
+
+    pipeline = SimpleNamespace(add=lambda _element: None, use_clock=lambda _clock: None,
+                               get_bus=lambda: None, set_state=lambda _state: None)
+    gst = SimpleNamespace(Caps=SimpleNamespace(from_string=str), Pipeline=SimpleNamespace(new=lambda _name: pipeline),
+                          ElementFactory=SimpleNamespace(make=make), State=SimpleNamespace(PLAYING=4))
+    video = SimpleNamespace(VideoOverlay=SimpleNamespace(set_window_handle=lambda _sink, _window: None))
+    gst_sync.GStreamerSyncPlayer(gst, video, None, synchronized).play("rtsp://camera/stream", 1)
+    return elements
+
+
+class TestPipelineModes:
+    def test_independent_tiles_keep_frame_timestamps_without_the_shared_delay(self):
+        elements = _played(synchronized=False)
+        source, sink = elements["rtspsrc"].properties, elements["d3d11videosink"].properties
+        assert source["add-reference-timestamp-meta"] is True
+        assert "ntp-sync" not in source and "ts-offset" not in sink
+        assert source["latency"] == 1_000
+
+    def test_strict_sync_waits_for_the_common_presentation_time(self):
+        elements = _played(synchronized=True)
+        assert elements["rtspsrc"].properties["ntp-sync"] is True
+        assert elements["rtspsrc"].properties["add-reference-timestamp-meta"] is True
+        assert "ts-offset" in elements["d3d11videosink"].properties
 
 
 class TestFrozenRuntimePreparation:

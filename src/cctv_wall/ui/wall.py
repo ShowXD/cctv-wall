@@ -8,7 +8,7 @@ from typing import Callable, Sequence
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction, QContextMenuEvent, QMouseEvent
-from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QMenu, QSizePolicy, QSplitter, QVBoxLayout, QWidget
 
 from cctv_wall import layout
 from cctv_wall.event_log import logger
@@ -270,13 +270,45 @@ def _due_for_retry(tile: _Tile) -> bool:
     return True
 
 
+class _GridSplitter(QSplitter):
+    """One row or the column of rows. It keeps its proportions when it is resized: Qt would share
+    a size change out by stretch factor instead, so a layout restored before the window reached
+    its size, or a window resized later, would drift away from what the operator set."""
+
+    def __init__(self, orientation: Qt.Orientation) -> None:
+        super().__init__(orientation)
+        self.setObjectName("wallGrid")
+        self.setChildrenCollapsible(False)
+        # Resized once on release, not on every mouse move: each step would resize every native
+        # video window on the page, which a slow PC or a remote desktop session cannot keep up with.
+        self.setOpaqueResize(False)
+        self.proportions: tuple[float, ...] = ()
+
+    def apply(self, proportions: tuple[float, ...]) -> None:
+        self.proportions = proportions
+        # QSplitter shares its real size out in these proportions, whatever their total.
+        self.setSizes([max(1, round(size * 10_000)) for size in proportions])
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.proportions:
+            self.apply(self.proportions)
+
+
 class WallView(QWidget):
     """Renders one page, preserving the low-memory one-player-per-visible-tile rule."""
 
     def __init__(self, factory: PlayerFactory, tiles_per_page: int, translator: Translator,
                  on_focus: Callable[[Camera], None], on_health_change: Callable[[], None],
-                 on_stream_change: Callable[[Camera, int], None]) -> None:
+                 on_stream_change: Callable[[Camera, int], None],
+                 on_layout_changed: Callable[[str, tuple[float, ...], tuple[float, ...]], None]
+                 = lambda _shape, _rows, _columns: None) -> None:
         super().__init__()
+        self._on_layout_changed = on_layout_changed
+        # Saved row and column proportions per grid shape ("3x3"); a shape without one is even.
+        self._layouts: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {}
+        self._shape = ""
+        self._stats_corner = "bottom_right"
         self._factory = factory
         self._tiles_per_page = tiles_per_page
         self._start_interval_ms = _connection_start_interval(factory, tiles_per_page)
@@ -290,9 +322,11 @@ class WallView(QWidget):
         self._start_timer = QTimer(self)
         self._start_timer.setSingleShot(True)
         self._start_timer.timeout.connect(self._start_next)
-        self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(6, 0, 6, 6)
-        self._grid.setSpacing(6)
+        self._box = QVBoxLayout(self)
+        self._box.setContentsMargins(6, 0, 6, 6)
+        # One horizontal splitter per row inside a vertical one: the gaps between tiles drag.
+        self._rows: _GridSplitter | None = None
+        self._lines: list[_GridSplitter] = []
         self._audit_timer = QTimer(self)
         self._audit_timer.timeout.connect(self.audit_now)
         self._playback_timer = QTimer(self)
@@ -308,10 +342,9 @@ class WallView(QWidget):
     def set_immersive(self, enabled: bool) -> None:
         """Trade decorative card gaps for image area while the wall fills its window."""
         if enabled:
-            self._grid.setContentsMargins(0, 0, 0, 0)
+            self._box.setContentsMargins(0, 0, 0, 0)
         else:
-            self._grid.setContentsMargins(6, 0, 6, 6)
-        self._grid.setSpacing(2 if enabled else 6)
+            self._box.setContentsMargins(6, 0, 6, 6)
 
     @property
     def tiles_per_page(self) -> int:
@@ -335,8 +368,10 @@ class WallView(QWidget):
                    for tile in displayed)
 
     def video_surface_size(self) -> tuple[int, int] | None:
-        """Size of one video area on the grid, or None when no tile is shown."""
-        if not self._tiles or self._focused_tile is not None:
+        """Size of one video area on an even grid. None when no tile is shown, or when the operator
+        sized the tiles themselves: tiles of different sizes have no one size to fit the window to,
+        and the window the operator left them in is the one to keep."""
+        if not self._tiles or self._focused_tile is not None or self._shape in self._layouts:
             return None
         surface = self._tiles[0].view.surface
         return surface.width(), surface.height()
@@ -357,14 +392,27 @@ class WallView(QWidget):
         if not visible:
             self._show_hint(self._translator.t("no_cameras"), self._translator.t("add_camera_hint"))
             return
-        _rows, columns = layout.grid_shape(len(visible))
-        for index, camera in enumerate(visible):
-            tile = _Tile(VideoTile(camera, self._translator, self._on_focus,
-                                   self._on_stream_change, self._retry_camera),
-                         camera.label)
-            self._tiles.append(tile)
-            self._grid.addWidget(tile.view, index // columns, index % columns)
-            tile.view.surface.winId()   # Qt creates the native window lazily; play() needs it now
+        rows, columns = layout.grid_shape(len(visible))
+        self._shape = f"{rows}x{columns}"
+        # Parented before any winId(): reparenting a native video window would replace it.
+        self._rows = _GridSplitter(Qt.Orientation.Vertical)
+        self._rows.splitterMoved.connect(lambda _position, _index: self._report_layout())
+        self._box.addWidget(self._rows)
+        for row in range(rows):
+            line = _GridSplitter(Qt.Orientation.Horizontal)
+            self._rows.addWidget(line)
+            self._lines.append(line)
+            for camera in visible[row * columns:(row + 1) * columns]:
+                tile = _Tile(VideoTile(camera, self._translator, self._on_focus,
+                                       self._on_stream_change, self._retry_camera),
+                             camera.label)
+                self._tiles.append(tile)
+                line.addWidget(tile.view)
+                tile.view.surface.winId()   # Qt creates the native window lazily; play() needs it now
+            while line.count() < columns:
+                line.addWidget(QWidget())   # a short last row keeps its columns under the others
+            line.splitterMoved.connect(lambda _position, _index, moved=line: self._align_columns(moved))
+        self._apply_layout()
         self._pending_starts = list(self._tiles)
         self._start_next()
         self._playback_ticks_left = PLAYBACK_CONFIRMATION_TICKS
@@ -380,9 +428,10 @@ class WallView(QWidget):
         if target is None:
             return False
         self._focused_tile = target
-        for tile in self._tiles:
-            tile.view.setVisible(tile is target)
-        self._grid.addWidget(target.view, 0, 0)
+        for line in self._lines:
+            line.setVisible(target.view.parent() is line)
+            for index in range(line.count()):
+                line.widget(index).setVisible(line.widget(index) is target.view)
         return True
 
     def restore_grid(self) -> None:
@@ -390,10 +439,48 @@ class WallView(QWidget):
         if self._focused_tile is None:
             return
         self._focused_tile = None
-        _rows, columns = layout.grid_shape(len(self._tiles))
-        for index, tile in enumerate(self._tiles):
-            self._grid.addWidget(tile.view, index // columns, index % columns)
-            tile.view.show()
+        for line in self._lines:
+            line.show()
+            for index in range(line.count()):
+                line.widget(index).show()
+
+    def _align_columns(self, moved: _GridSplitter) -> None:
+        """A column is one column all the way down: dragging its edge in one row moves it in all."""
+        sizes = moved.sizes()
+        for line in self._lines:
+            if line is not moved:
+                line.setSizes(sizes)
+        self._report_layout()
+
+    def set_layouts(self, layouts: dict[str, tuple[tuple[float, ...], tuple[float, ...]]]) -> None:
+        """Saved proportions per grid shape; the page on screen takes its own at once."""
+        self._layouts = dict(layouts)
+        self._apply_layout()
+
+    def _apply_layout(self) -> None:
+        if self._rows is None:
+            return
+        rows, columns = self._layouts.get(
+            self._shape, ((1.0,) * self._rows.count(), (1.0,) * self._lines[0].count()))
+        self._rows.apply(rows)
+        for line in self._lines:
+            line.apply(columns)
+
+    def _report_layout(self) -> None:
+        if self._rows is None:
+            return
+        rows, columns = self._rows.sizes(), self._lines[0].sizes()
+        proportions = (tuple(round(size / sum(rows), 4) for size in rows),
+                       tuple(round(size / sum(columns), 4) for size in columns))
+        self._layouts[self._shape] = proportions
+        self._rows.proportions = proportions[0]
+        for line in self._lines:
+            line.proportions = proportions[1]
+        self._on_layout_changed(self._shape, *proportions)
+
+    def set_stats_corner(self, corner: str) -> None:
+        """Taken up at the next refresh, within a second."""
+        self._stats_corner = corner
 
     def set_stats_visible(self, visible: bool) -> None:
         """Resolution, frame rate, dropped frames, bitrate and reconnects drawn on each picture."""
@@ -418,7 +505,8 @@ class WallView(QWidget):
             if tile.stats_player is not player:
                 tile.stats_player, tile.last_stats = player, None
             player.show_overlay(stats_text(self._translator, stats, tile.last_stats,
-                                           now - tile.last_stats_at, tile.reconnects))
+                                           now - tile.last_stats_at, tile.reconnects),
+                                self._stats_corner)
             tile.last_stats, tile.last_stats_at = stats, now
 
     def show_ai_event(self, camera: Camera, text: str, colour: str, line: int = 0) -> None:
@@ -426,6 +514,12 @@ class WallView(QWidget):
         for tile in self._tiles:
             if tile.view.camera == camera:
                 tile.view.show_ai_event(text, colour, line)
+
+    def frame_lag(self, camera: Camera) -> float | None:
+        """See Player.frame_lag; None when the camera is not playing on this page."""
+        tile = next((tile for tile in self._tiles
+                     if tile.view.camera == camera and tile.player is not None), None)
+        return tile.player.frame_lag() if tile is not None else None
 
     def stop(self) -> None:
         """Cancel queued starts, then release the visible players."""
@@ -606,8 +700,10 @@ class WallView(QWidget):
         logger().info("camera=%s playback=%s", tile.log_label, state.value)
 
     def _clear_widgets(self) -> None:
-        while self._grid.count():
-            item = self._grid.takeAt(0)
+        self._rows = None
+        self._lines.clear()
+        while self._box.count():
+            item = self._box.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
 
@@ -624,4 +720,4 @@ class WallView(QWidget):
         description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout_box.addWidget(label)
         layout_box.addWidget(description)
-        self._grid.addWidget(empty, 0, 0)
+        self._box.addWidget(empty)

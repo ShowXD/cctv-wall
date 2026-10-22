@@ -1,4 +1,6 @@
-"""Optional GStreamer backend for strict RTCP/NTP timestamp synchronisation.
+"""Optional GStreamer backend: strict RTCP/NTP timestamp synchronisation of a whole page,
+or tiles played on their own that still report each frame's capture time (frame_lag), for
+matching AI results to the picture.
 
 The official ``gstreamer-bundle`` supplies the supported Python GI bindings on
 Windows.  Using those bindings is important here: native video overlays and GObject
@@ -9,6 +11,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +30,10 @@ H264_DECODER_ELEMENTS = ("d3d11h264dec", "avdec_h264")
 # A strict wall deliberately trades latency for one common presentation time: every tile
 # waits this long, so the slowest camera's frames still arrive before they are due.
 _NTP_SYNC_BUFFER_MS = 3_000
+# A tile played on its own buffers as much as VLC's network caching does.
+_INDEPENDENT_BUFFER_MS = 1_000
 _PRESENTATION_DELAY_NS = _NTP_SYNC_BUFFER_MS * 1_000_000
+_NTP_EPOCH_OFFSET_SECONDS = 2_208_988_800   # 1900-01-01 (NTP) to 1970-01-01 (Unix)
 _DLL_DIRECTORIES: list[object] = []
 
 
@@ -98,16 +104,20 @@ def _load_gst() -> tuple[Any, Any]:
 
 
 class GStreamerSyncPlayer:
-    """An H.264 RTSP tile whose RTP timestamps are scheduled against NTP time."""
+    """An H.264 RTSP tile; synchronized, its RTP timestamps are scheduled against NTP time
+    together with the rest of the page."""
 
-    def __init__(self, gst: Any, gst_video: Any, clock: Any) -> None:
+    def __init__(self, gst: Any, gst_video: Any, clock: Any, synchronized: bool = True) -> None:
         self._gst = gst
         self._gst_video = gst_video
         self._clock = clock
+        self._synchronized = synchronized
         self._pipeline: Any | None = None
         self._sink: Any | None = None
         self._bus: Any | None = None
         self._error = ""
+        self._ntp_caps = gst.Caps.from_string("timestamp/x-ntp")
+        self._frame_lag: float | None = None
 
     def play(self, url: str, window_id: int) -> None:
         if not url.lower().startswith("rtsp://"):
@@ -126,15 +136,21 @@ class GStreamerSyncPlayer:
         for element in (source, depay, parser, decoder, convert, sink):
             pipeline.add(element)
         source.set_property("location", url)
-        source.set_property("ntp-sync", True)
-        source.set_property("buffer-mode", 4)  # GstRTSPSrcBufferMode.synced
-        source.set_property("latency", _NTP_SYNC_BUFFER_MS)
+        if self._synchronized:
+            source.set_property("ntp-sync", True)
+            source.set_property("buffer-mode", 4)  # GstRTSPSrcBufferMode.synced
+            source.set_property("latency", _NTP_SYNC_BUFFER_MS)
+        else:
+            source.set_property("latency", _INDEPENDENT_BUFFER_MS)
         source.set_property("drop-on-latency", False)
         source.set_property("do-rtcp", True)
         source.set_property("protocols", 4)  # GstRTSPLowerTrans.TCP
+        # Stamps every frame with its RTCP/NTP capture time, for frame_lag().
+        source.set_property("add-reference-timestamp-meta", True)
         self._sink = sink
         sink.set_property("sync", True)
-        sink.set_property("ts-offset", _PRESENTATION_DELAY_NS)
+        if self._synchronized:
+            sink.set_property("ts-offset", _PRESENTATION_DELAY_NS)
         if not depay.link(parser) or not parser.link(decoder) or not convert.link(sink):
             raise PlaybackError("GStreamer could not link the strict sync pipeline")
         # Joining mid-GOP would decode P-frames without their reference: solid green
@@ -179,8 +195,17 @@ class GStreamerSyncPlayer:
     def stats(self) -> None:
         return None   # the overlay is a libvlc feature; strict sync shows none
 
-    def show_overlay(self, text: str | None) -> None:
+    def show_overlay(self, text: str | None, corner: str = "bottom_right") -> None:
         pass
+
+    def frame_lag(self) -> float | None:
+        """None until the camera's first RTCP Sender Report, which is what maps its frames to
+        NTP time. A few frames carry no stamp; the lag is steady, so the last one stands in."""
+        sample = self._sink.get_property("last-sample") if self._sink is not None else None
+        meta = sample.get_buffer().get_reference_timestamp_meta(self._ntp_caps) if sample else None
+        if meta is not None:
+            self._frame_lag = time.time() - (meta.timestamp / 1e9 - _NTP_EPOCH_OFFSET_SECONDS)
+        return self._frame_lag
 
     def release(self) -> None:
         if self._pipeline is not None:
@@ -188,6 +213,7 @@ class GStreamerSyncPlayer:
         self._bus = None
         self._sink = None
         self._pipeline = None
+        self._frame_lag = None
 
     def _element(self, name: str) -> Any:
         element = self._gst.ElementFactory.make(name, None)
@@ -204,15 +230,15 @@ class GStreamerSyncPlayer:
 class GStreamerSyncPlayerFactory:
     """Factory for a site wall; all its players share a single GStreamer clock."""
 
-    synchronized = True
-
-    def __init__(self) -> None:
+    def __init__(self, synchronized: bool = True) -> None:
+        self.synchronized = synchronized
         self._gst, self._gst_video = _load_gst()
         self._clock = self._gst.SystemClock.obtain()
-        logger().info("strict timestamp sync runtime initialized; shared system clock acquired")
+        logger().info("GStreamer runtime initialized (%s)",
+                      "strict timestamp sync" if synchronized else "independent tiles, frame timestamps")
 
     def create(self) -> GStreamerSyncPlayer:
-        return GStreamerSyncPlayer(self._gst, self._gst_video, self._clock)
+        return GStreamerSyncPlayer(self._gst, self._gst_video, self._clock, self.synchronized)
 
     def missing_elements(self) -> tuple[str, ...]:
         """Required pipeline components, including at least one H.264 decoder."""

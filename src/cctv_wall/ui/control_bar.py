@@ -1,7 +1,7 @@
 """The bar above the wall: where the operator is, what is live, what it costs, and the controls."""
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Sequence
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QActionGroup, QColor, QIcon, QPainter, QPen
@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout, QLabel, QMenu, QS
                                QToolButton, QWidget)
 
 from cctv_wall.i18n import LANGUAGE_LABELS, Translator
-from cctv_wall.models import TILES_LIMIT, Workspace
+from cctv_wall.models import STATS_CORNERS, TILES_LIMIT, Workspace
 from cctv_wall.resources import ProcessUsage
 from cctv_wall.ui.theme import painted_icon
 
@@ -17,7 +17,18 @@ from cctv_wall.ui.theme import painted_icon
 # character renders tiny in Segoe UI.
 ICON_COLOUR = QColor("#7f93ab")
 ICON_SIZE = 36
-TITLE_MAX_WIDTH = 220   # several picked sites make a long title; the rest goes to the tooltip
+TITLE_MAX_WIDTH = 220   # a long site name is cut here; the tooltip has it whole
+
+
+class _ClickableLabel(QLabel):
+    def __init__(self, on_click: Callable[[], None]) -> None:
+        super().__init__()
+        self._on_click = on_click
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._on_click()
+        super().mousePressEvent(event)
 
 
 def _outline(painter: QPainter) -> None:
@@ -47,6 +58,14 @@ def _draw_stats(painter: QPainter) -> None:
         painter.drawRect(x, top, 4, 31 - top)
 
 
+def _draw_layout(painter: QPainter) -> None:
+    """Four even tiles: the default layout the button returns to."""
+    _outline(painter)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for x, y in ((4, 4), (19, 4), (4, 19), (19, 19)):
+        painter.drawRect(x, y, 13, 13)
+
+
 class ControlBar(QFrame):
     """Shows state it is given and reports clicks; the main window owns every decision.
 
@@ -60,6 +79,7 @@ class ControlBar(QFrame):
                  on_language: Callable[[str], None], on_theme: Callable[[str], None],
                  on_fill: Callable[[], None], on_strict_sync: Callable[[bool], None],
                  on_ai_panel: Callable[[], None], on_stats: Callable[[bool], None],
+                 on_stats_corner: Callable[[str], None], on_reset_layout: Callable[[], None],
                  on_reload: Callable[[], None], on_logs: Callable[[], None]) -> None:
         super().__init__()
         self._translator = translator
@@ -69,7 +89,10 @@ class ControlBar(QFrame):
         box.setSpacing(8)
         box.addWidget(self._button("☰", translator.t("toggle_sidebar"), on_toggle_sidebar,
                                    "compactAction"))
-        self._site_title = QLabel()
+        # Several sites on the wall fold into "first site … (n sites)"; a click unfolds them.
+        self._site_names: tuple[str, ...] = ()
+        self._title_expanded = False
+        self._site_title = _ClickableLabel(self._toggle_title)
         self._site_title.setObjectName("siteTitle")
         box.addWidget(self._site_title)
         self._live_badge = QLabel()
@@ -98,13 +121,13 @@ class ControlBar(QFrame):
         self._ai_button = self._button(f"● {translator.t('ai_short')}", translator.t("ai_events"),
                                        on_ai_panel)
         self._ai_button.setCheckable(True)
-        self._ai_button.setChecked(True)
+        self._ai_button.setChecked(workspace.ai_panel_visible)
         self._ai_button.hide()
         box.addWidget(self._ai_button)
-        stats_button = self._icon_button(painted_icon(ICON_SIZE, _draw_stats),
-                                         translator.t("stats_tip"), on_stats)
-        stats_button.setCheckable(True)
-        box.addWidget(stats_button)
+        self._stats_button = self._stats_menu_button(workspace, menu_parent, on_stats, on_stats_corner)
+        box.addWidget(self._stats_button)
+        box.addWidget(self._icon_button(painted_icon(ICON_SIZE, _draw_layout),
+                                        translator.t("reset_layout_tip"), on_reset_layout))
         box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_BrowserReload,
                                         translator.t("reload_tip"), on_reload))
         box.addWidget(self._icon_button(QStyle.StandardPixmap.SP_FileDialogDetailedView,
@@ -184,13 +207,34 @@ class ControlBar(QFrame):
         button.setMenu(menu)
         return button
 
-    def show_status(self, site_name: str, live: int, visible: int, page: int, pages: int) -> None:
-        title = site_name or self._translator.t("no_site")
-        self._site_title.setText(self._site_title.fontMetrics().elidedText(
-            title, Qt.TextElideMode.ElideRight, TITLE_MAX_WIDTH))
-        self._site_title.setToolTip(title)
+    def show_status(self, site_names: Sequence[str], live: int, visible: int, page: int,
+                    pages: int) -> None:
+        if tuple(site_names) != self._site_names or not site_names:
+            self._site_names = tuple(site_names)
+            self._render_title()
         self._live_badge.setText(self._translator.t("live", live=live, total=visible))
         self._page_label.setText(self._translator.t("page", current=page + 1, total=pages))
+
+    def _toggle_title(self) -> None:
+        if len(self._site_names) > 1:
+            self._title_expanded = not self._title_expanded
+            self._render_title()
+
+    def _render_title(self) -> None:
+        names = self._site_names
+        full = self._translator.t("list_separator").join(names) or self._translator.t("no_site")
+        self._site_title.setToolTip(full)
+        if len(names) < 2:
+            self._site_title.unsetCursor()
+            self._site_title.setText(self._site_title.fontMetrics().elidedText(
+                full, Qt.TextElideMode.ElideRight, TITLE_MAX_WIDTH))
+            return
+        self._site_title.setCursor(Qt.CursorShape.PointingHandCursor)
+        if self._title_expanded:
+            self._site_title.setText(f"{full} ▴")
+        else:
+            self._site_title.setText(self._translator.t("sites_summary", first=names[0],
+                                                        count=len(names)) + " ▾")
 
     def show_resources(self, usage: ProcessUsage | None, players: int) -> None:
         """How much of the whole PC the wall uses; the detail waits in the tooltip."""
@@ -211,6 +255,38 @@ class ControlBar(QFrame):
 
     def set_filled(self, filled: bool) -> None:
         self._fill_button.setToolTip(self._translator.t("restore_window" if filled else "maximize"))
+
+    def _stats_menu_button(self, workspace: Workspace, menu_parent: QWidget,
+                           on_toggle: Callable[[bool], None],
+                           on_corner: Callable[[str], None]) -> QToolButton:
+        """A click shows or hides the numbers; the arrow picks the corner they sit in."""
+        button = self._icon_button(painted_icon(ICON_SIZE, _draw_stats),
+                                   self._translator.t("stats_tip"), on_toggle)
+        button.setObjectName("compactMenuAction")   # wider: the corner arrow needs room
+        button.setCheckable(True)
+        button.setChecked(workspace.stats_visible)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        menu = QMenu(menu_parent)   # parented to the window, as in _theme_button
+        button.destroyed.connect(menu.deleteLater)
+        group = QActionGroup(menu)
+        labels = (self._translator.t("corner_top_left"), self._translator.t("corner_top_right"),
+                  self._translator.t("corner_bottom_left"), self._translator.t("corner_bottom_right"))
+        self._corner_actions = {}
+        for corner, label in zip(STATS_CORNERS, labels):
+            action = menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(corner == workspace.stats_corner)
+            action.triggered.connect(lambda _checked=False, chosen=corner: on_corner(chosen))
+            group.addAction(action)
+            self._corner_actions[corner] = action
+        button.setMenu(menu)
+        return button
+
+    def show_layout(self, workspace: Workspace) -> None:
+        """Reflect a reset layout without reporting it back as clicks."""
+        self._stats_button.setChecked(workspace.stats_visible)
+        self._corner_actions[workspace.stats_corner].setChecked(True)
+        self._ai_button.setChecked(workspace.ai_panel_visible)
 
     def set_sync(self, enabled: bool) -> None:
         self._sync_button.setChecked(enabled)

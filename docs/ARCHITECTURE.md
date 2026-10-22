@@ -18,7 +18,7 @@ src/cctv_wall/
   repository.py   workspace.json 讀寫（唯一讀寫設定檔的模組）
   event_log.py    輪替式診斷日誌（1 MB × 4），寫在設定檔旁邊；不依賴 Qt，程式內檢視以 add_listener 訂閱
   vlc_runtime.py  打包後把 python-vlc 指向包內的 libvlc
-  gst_sync.py     GStreamer 嚴格時間戳同步後端
+  gst_sync.py     GStreamer 後端：嚴格時間戳同步，或各格獨立播放；frame_lag() 讀畫面的 NTP 拍攝時間供 AI 結果對齊
   sync_probe.py   逐台攝影機探測 RTCP Sender Report 可用性
   ai_feed.py      AI 結果 TCP 來源：NDJSON 解析、攝影機對照／略過規則／代碼文字、顯示延遲、斷線重連（不碰 Qt）
   build.py        版本化單一 EXE 發行包建置（build cctv-wall）
@@ -27,11 +27,11 @@ src/cctv_wall/
   ui/navigation.py    左側地點／攝影機樹狀導覽：切換、排序、Ctrl＋點選多台、右鍵選單，決策全部往上委派
   ui/view_mode.py     全螢幕／放大單格／填滿畫面等顯示狀態，不可變值，可脫離 Qt 測試
   ui/frameless.py     無邊框視窗的拖曳與縮放邊條
-  ui/wall.py          Qt 影像牆：只維持可見格數的播放器與原生 VLC surface、畫格下方的 AI 結果條、斷線重連
+  ui/wall.py          Qt 影像牆：每列一個 QSplitter 疊成可拖曳的格子；只維持可見格數的播放器與原生 VLC surface、畫格下方的 AI 結果條、斷線重連
   ui/control_bar.py   頂部列：顯示地點／播放路數／資源用量，按鈕只回報給主視窗
   ui/camera_form.py   攝影機欄位表單（設定視窗與單台攝影機對話框共用）
-  ui/editor.py        Qt 設定視窗：地點與攝影機的新增、刪除、排序、改名立即存檔；攝影機欄位是草稿，
-                      按儲存列出變更後一次套用；關閉時影像牆重載一次
+  ui/editor.py        Qt 設定視窗：所有修改都在工作副本，套用／確認才交給主視窗、取消即捨棄；
+                      多選、Del／Alt+↑↓／F2／Ctrl+N 快捷鍵；關閉時影像牆重載一次
   ui/site_commands.py 側欄的地點與攝影機指令（複製／改名／刪除／AI 連線／新增或編輯攝影機）：回傳新的 Workspace 或 None
   ui/logs.py          事件紀錄與同步診斷對話框（唯讀）
   ui/ai_panel.py      AI 結果側欄：把 socket 執行緒的事件轉回 GUI、到顯示時刻才分派到畫格
