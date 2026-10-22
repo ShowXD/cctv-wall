@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 237 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 238 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -36,6 +36,26 @@ uv run build cctv-wall         # 打包（一律 onefile）
 | `--check` | 開發環境回報 `strict sync : available` |
 
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
+
+---
+
+## 2026-10-22：CI（Linux）測試全過後 Bus error 結束（`main`）
+
+**狀態：已修正、已在 WSL Ubuntu 重現並驗證；已 commit 並推送 main，CI 結果待確認。**
+- 症狀：CI 的 `python -m pytest` 236 passed 後印出 `QObject: shared QObject was deleted directly`，接著 Bus error，exit 135。
+  Windows 本機不會發生。自 `TestCodePicker` 加入後就存在，推送 main 才觸發 CI 顯現。
+- 原因（WSL 最小重現）：signal 接到**持有 self 的 lambda**時，lambda 與 widget 形成循環參考，widget 在 Python 這邊被釋放後
+  拖到 QApplication 之後才真正銷毀，Linux 上就崩潰；接 bound method 則不會（PySide 對 bound method 的接收者另有處理）。
+  先前一度改用 `activated` 看似修好，只是 GC 順序剛好，單獨跑該測試仍會崩。
+- 修正：測試會建立的長駐 widget 改接 bound method——`_CodePicker._key`（`_key_chosen`）、`FlatTree` 展開／收合重繪
+  （`_repaint_arrows`）、`SiteNavigation` 的 AI 按鈕與 Alt+↑↓。下拉選單同時改用 `activated`（`_CodePicker._key`、
+  對齊方式、AI 側欄篩選、語言），只回應手動選擇，程式內的變更本來就自行呼叫處理函式。
+  未改：暫時性選單項目的 lambda，以及測試未建立的 `wall.py`／`editor.py`（exe 只在 Windows 執行，未見問題）。
+  之後在 widget 上接 signal，請用 bound method，不要用持有 self 的 lambda。
+- 檢查：Windows `pytest` 238 passed（新增手動選擇分類欄位的測試）、ruff 無問題、`--dry-run` 0；
+  WSL Ubuntu（Python 3.13、offscreen）：全套、各測試檔、`test_widgets.py` 每個測試各跑 3 次，共 66 次全部 exit 0。
+- 重現方式：WSL 中複製 `src`、`tests`、`pyproject.toml` 到暫存目錄，`uv venv -p 3.13` 並安裝 `pyside6-essentials python-vlc pytest`，
+  `QT_QPA_PLATFORM=offscreen python -m pytest -q tests/test_widgets.py::TestCodePicker` 看結束碼。
 
 ---
 

@@ -172,9 +172,9 @@ class SiteNavigation(QFrame):
         self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
-        for keys, action in (("Delete", self._delete_selected),
-                             ("Alt+Up", lambda: self._move_selected(-1)),
-                             ("Alt+Down", lambda: self._move_selected(1))):
+        # Bound methods, not lambdas holding self: see ai_feed_editor._CodePicker.
+        for keys, action in (("Delete", self._delete_selected), ("Alt+Up", self._move_up),
+                             ("Alt+Down", self._move_down)):
             shortcut = QShortcut(QKeySequence(keys), self._sites)
             shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(action)
@@ -187,7 +187,7 @@ class SiteNavigation(QFrame):
         layout.addWidget(settings)
         self._ai_button = QPushButton(self._translator.t("ai_feeds_button"))
         self._ai_button.setObjectName("settingsButton")
-        self._ai_button.clicked.connect(lambda: self._on_site_action("ai_feeds", ""))
+        self._ai_button.clicked.connect(self._edit_ai_feeds)
         layout.addWidget(self._ai_button)
 
     def set_workspace(self, workspace: Workspace) -> None:
@@ -271,6 +271,15 @@ class SiteNavigation(QFrame):
         sites, cameras = self._targets()
         if sites or cameras:
             self._on_delete(sites, cameras)   # asked to confirm, and saved, by the window
+
+    def _edit_ai_feeds(self) -> None:
+        self._on_site_action("ai_feeds", "")   # "" = the site on screen
+
+    def _move_up(self) -> None:
+        self._move_selected(-1)
+
+    def _move_down(self) -> None:
+        self._move_selected(1)
 
     def _move_selected(self, step: int) -> None:
         """Alt+Up/Down: a site, or a block of cameras of one site, one row up or down. Saved at

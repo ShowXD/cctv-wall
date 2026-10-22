@@ -138,7 +138,9 @@ class AiEventPanel(QFrame):
         self._status.setTextFormat(Qt.TextFormat.RichText)
         box.addWidget(self._status)
         self._filter = QComboBox()
-        self._filter.currentIndexChanged.connect(self._apply_filter)
+        # activated: a combo box being destroyed still reports an index change (see
+        # ai_feed_editor._CodePicker); _fill_filter applies its own changes.
+        self._filter.activated.connect(self._apply_filter)
         box.addWidget(self._filter)
         self._list = QListWidget()
         self._list.setObjectName("aiEventList")

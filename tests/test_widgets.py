@@ -35,6 +35,19 @@ class TestCodePicker:
             assert item.sizeHint().width() > metrics.horizontalAdvance(item.text())
         assert picker.values() == ["1"]
 
+    def test_choosing_a_field_by_hand_lists_its_kinds(self):
+        """The list follows the operator's choice (activated); a combo box being torn down also
+        reports an index change, and refilling the deleted list then crashed the process."""
+        _app()
+        picker = _CodePicker(Translator("zh_TW"), "-", "")
+        picker.set_fields({"vdType": [("1", "公車"), ("6", "大卡車")], "eventType": [("4", "停等")]})
+        picker.set_choice("", [])
+        assert picker._values.count() == 0
+        index = picker._key.findData("vdType")
+        picker._key.setCurrentIndex(index)
+        picker._key.activated.emit(index)
+        assert picker._values.count() == 2
+
 
 class TestCameraColours:
     def test_a_page_never_shows_two_tiles_in_one_colour(self):

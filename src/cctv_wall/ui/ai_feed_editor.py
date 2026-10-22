@@ -137,7 +137,11 @@ class _CodePicker(QWidget):
         key_row = QHBoxLayout()
         key_row.addWidget(QLabel(translator.t("ai_tile_key")))
         self._key = QComboBox()
-        self._key.currentIndexChanged.connect(lambda _index: self._show_values(self.values()))
+        # A bound method, not a lambda: a lambda that holds self keeps this widget alive past
+        # QApplication, and destroying it then crashes the process on Linux ("shared QObject was
+        # deleted directly", then a bus error). activated: only a choice made by hand needs it;
+        # changes made in code call _show_values themselves.
+        self._key.activated.connect(self._key_chosen)
         key_row.addWidget(self._key, 0 if beside_key else 1)
         if beside_key:
             key_row.addStretch(1)
@@ -156,6 +160,9 @@ class _CodePicker(QWidget):
             self._values.setTextElideMode(Qt.TextElideMode.ElideNone)
             self._values.setMaximumHeight(100)   # two or three wrapped rows of kinds
         box.addWidget(self._values)
+
+    def _key_chosen(self, _index: int) -> None:
+        self._show_values(self.values())
 
     def set_fields(self, fields: dict[str, list[tuple[str, str]]]) -> None:
         """New choices from the message format; keeps the current field and ticks where they remain."""
@@ -310,7 +317,7 @@ class AiFeedsDialog(QDialog):
         # Stored "received" connections also show as manual; _store_current keeps their value.
         self._align.addItem(self._translator.t("ai_align_manual"), ALIGN_AI_TIME)
         self._align.setToolTip(self._translator.t("ai_delay_help"))
-        self._align.currentIndexChanged.connect(self._refresh_delay_enabled)
+        self._align.activated.connect(self._refresh_delay_enabled)   # see _CodePicker._key
         form.addRow(self._translator.t("ai_host"), address)
         form.addRow(self._translator.t("ai_align"), self._align)
         form.addRow(self._translator.t("ai_delay"), delay)

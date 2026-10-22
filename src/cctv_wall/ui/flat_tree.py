@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex
 from PySide6.QtGui import QMouseEvent
-from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget, QWidget
+from PySide6.QtWidgets import (QStyledItemDelegate, QStyleOptionViewItem, QTreeWidget,
+                               QTreeWidgetItem, QWidget)
 
 CHILD_INDENT = 22
 ARROW_WIDTH = 28   # click area at the left of a top-level row that toggles it
@@ -47,9 +48,13 @@ class FlatTree(QTreeWidget):
         self.setRootIsDecorated(False)
         self.setIndentation(0)
         self.setItemDelegate(FlatTreeDelegate(self))
-        # The drawn arrow depends on the expanded state, so repaint when it changes.
-        self.itemExpanded.connect(lambda _item: self.viewport().update())
-        self.itemCollapsed.connect(lambda _item: self.viewport().update())
+        # The drawn arrow depends on the expanded state, so repaint when it changes. Bound
+        # methods, not lambdas holding self: see ai_feed_editor._CodePicker.
+        self.itemExpanded.connect(self._repaint_arrows)
+        self.itemCollapsed.connect(self._repaint_arrows)
+
+    def _repaint_arrows(self, _item: QTreeWidgetItem) -> None:
+        self.viewport().update()
 
     def collapsed_top_level_texts(self) -> frozenset[str]:
         """Remember only what was collapsed, so a newly added row still opens after a rebuild."""

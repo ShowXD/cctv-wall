@@ -179,7 +179,8 @@ class ControlBar(QFrame):
         for language, label in LANGUAGE_LABELS.items():
             box.addItem(label, language)
         box.setCurrentIndex(box.findData(self._translator.language))
-        box.currentIndexChanged.connect(lambda index: on_change(str(box.itemData(index))))
+        # activated: only the operator's choice; a box torn down with the bar must not switch language.
+        box.activated.connect(lambda index: on_change(str(box.itemData(index))))
         return box
 
     def _theme_button(self, theme: str, menu_parent: QWidget,
