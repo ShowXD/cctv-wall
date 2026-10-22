@@ -39,6 +39,17 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-22：準備公開 repo：README 改寫與截圖（`main`）
+
+- 使用者要把 repo 設為 public。公開前檢查：`workspace.json` 從未進版控；gitleaks 掃 75 個 commit 無洩漏；
+  歷史中的帳密都是範例字串、沒有公網 IP。公開後會看到 commit 作者 email 與本文件（已告知使用者）。
+- README 改為常見開源格式：徽章（latest release 不含預先發布版）、截圖、功能分組、下載（正式版與 `main-build`）、
+  快速開始、從原始碼建置、文件、貢獻、授權。截圖在 `docs/images/`：`wall.png`（554×311，偏小，建議重新擷取原尺寸覆蓋）、
+  `tile-ai-results.png`、`ai-feed-settings.png`、`settings-sites.png`；已檢查無可辨識車牌、人臉或帳密，只有內網 IP。
+- CONTRIBUTING 的測試數更新為 238。
+
+---
+
 ## 2026-10-22：CI（Linux）測試全過後 Bus error 結束（`main`）
 
 **狀態：已修正、已在 WSL Ubuntu 重現並驗證；已 commit 並推送 main，CI 結果待確認。**
