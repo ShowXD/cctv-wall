@@ -14,6 +14,10 @@ Statistics stay on: they are a few counters per frame, and the status overlay re
 from __future__ import annotations
 
 RTSP_PREFIX = "rtsp://"
+# live555 keeps 250 000 bytes per frame by default; a high-resolution main stream's keyframe
+# overflows it, the rest is dropped ("exceeds the client's buffer size") and the lower part of
+# the picture smears until the next keyframe.  The buffer is only reserved, so 2 MB per tile is cheap.
+RTSP_FRAME_BUFFER_BYTES = 2_000_000
 
 # VLC is embedded in a Qt native surface.  Let Qt own mouse/keyboard input so double-click
 # focus and the right-click stream menu are reliable on Windows.
@@ -32,4 +36,5 @@ def media_options_for(url: str) -> tuple[str, ...]:
     if url.startswith(RTSP_PREFIX):
         # TCP costs a little latency and buys freedom from packet-loss smearing.
         options.append(":rtsp-tcp")
+        options.append(f":rtsp-frame-buffer-size={RTSP_FRAME_BUFFER_BYTES}")
     return tuple(options)
