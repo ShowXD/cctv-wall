@@ -82,6 +82,7 @@ cctv_wall.spec    PyInstaller 打包設定
 4. **`:avcodec-skiploopfilter=nonref`** —— 只對非參考畫格關 deblocking，省下大量 CPU。
 5. **`--no-audio`** —— 監視器不需要聲音，一律不解碼音訊。
 6. **`--drop-late-frames`** —— 來不及就丟，不要讓延遲累積；快取 1000 ms。
+   RTSP 另設 `:rtsp-frame-buffer-size=2000000`：live555 預設 250 000 bytes 裝不下高解析度關鍵影格，會截掉畫面後段。
 7. **共用一個 libvlc Instance** —— 每個 Instance 都要掃一次外掛並佔記憶體。
 8. **錯開建立連線** —— 每頁格數越少間隔越長（≤4 格 650 ms、≤9 格 350 ms、其餘 175 ms），嚴格同步模式不錯開。
 9. **CPU 只每 2 秒取樣一次** —— 頂部列的資源顯示不跟著每次重繪取樣；頂部列看不到（填滿畫面、

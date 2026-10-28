@@ -39,6 +39,20 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-28：RTSP 大畫面被截斷（分支 `fix/rtsp-frame-buffer`，從 `main` 開）
+
+**狀態：已修正、已測試，已在分支 commit；未 push、未合併 main，尚未用現場攝影機確認。**
+- 現場 log：`MultiFramedRTPSource::doGetNextFrame1(): The total received frame size exceeds the client's buffer size (250000).
+  N bytes of trailing data will be dropped!`。VLC 的 live555 每張畫面預設只留 250 000 bytes，高解析度主碼流的關鍵影格
+  超過就丟掉後段，畫面下半部花掉到下一張關鍵影格。
+- 修正：`performance.media_options_for` 對 RTSP 加 `:rtsp-frame-buffer-size=2000000`（`RTSP_FRAME_BUFFER_BYTES`）。
+  已確認本機 libvlc 3.0.24（`C:\Tools\VLC`）的 live555 外掛有此選項。GStreamer 後端不受影響。
+- 檢查：pytest 239 passed（新增一項選項測試）、`--dry-run` 0。開頭表格的測試數沿用 main 的舊值，
+  與 `feature/camera-import-export` 合併時再一起更新，避免兩個分支在同一行衝突。
+- 下一步：使用者重新啟動後看 log 是否還有這行、畫面下半部是否正常；之後 push／合併需使用者同意。
+
+---
+
 ## 2026-10-22：發布 v0.5.0（`main`）
 
 - `pyproject.toml` 版本 0.4.0 → 0.5.0（`uv lock` 只更新專案版本與 exclude-newer 時間戳，相依未變），BUILD.md 範例同步。
