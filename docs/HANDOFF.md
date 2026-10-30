@@ -39,6 +39,20 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-30：從剪貼簿貼上攝影機（分支 `feature/paste-cameras`，issue #3）
+
+**狀態：已實作、已驗證，已在分支 commit；未 push、未合併 main。**
+- 需求：現場常直接複製多個網址，或從 Excel 複製整列，要不經檔案就加到選取的地點。使用者選「自動判斷」。
+- `camera_table.rows_from_text`（Tab 分隔、用 csv 解析，Excel 含換行的儲存格會加引號）、`url_list`
+  （每個非空白列只有一格且含 `://` 才算網址清單）。
+- `table_import.paste_cameras`：網址清單 → 一次確認後 `merge_into`（帳密拆出、去重）；多欄 → `ImportDialog.show_rows`
+  （從 `load()` 拆出）指認欄位；空的 → 提示。入口：側欄 `Ctrl+V`（選取列所屬地點）、地點右鍵。
+- 檢查：pytest 253 passed（新增 2 項）、`--dry-run` 0；offscreen 腳本操作主視窗：選 Plant 貼兩個網址 → Plant 多 2 台
+  且帳號拆出；貼 Excel 兩欄 → 對話框猜出名稱／IP、預設地點 Plant；空剪貼簿 → 提示。
+- 這個分支從 main 開，不含 `fix/tile-bitrate`（位元率修正，已 commit 未 push）。
+
+---
+
 ## 2026-10-28：RTSP 大畫面被截斷（分支 `fix/rtsp-frame-buffer`，已合併 main）
 
 **狀態：已修正、已測試，2026-10-30 已合併 main 並推送、分支已刪除；尚未用現場攝影機確認。**

@@ -38,7 +38,7 @@ src/cctv_wall/
   ui/ai_panel.py      AI 結果側欄：把 socket 執行緒的事件轉回 GUI、到顯示時刻才分派到畫格
   ui/ai_feed_editor.py AI 辨識連線對話框：連線與對齊、攝影機對照與單台篩選、畫格下方分行、訊息格式
                       （表單↔設定的轉換可單獨測試）
-  ui/table_import.py  匯入對話框（每欄指認欄位、預覽與錯誤列）與匯出；介面同 site_commands
+  ui/table_import.py  匯入對話框（每欄指認欄位、預覽與錯誤列）、匯出、剪貼簿貼上；介面同 site_commands
   ui/startup.py       啟動進度畫面
   ui/app.py           Qt 主視窗：組裝上述元件、持有 Workspace 並負責記憶
   __main__.py     進入點：唯一知道真實實作的地方（--check / --dry-run）

@@ -47,6 +47,19 @@ def test_broken_xlsx_is_a_read_error(tmp_path):
         camera_table.sheet_names(path)
 
 
+def test_pasted_url_lines_are_a_url_list():
+    rows = camera_table.rows_from_text("rtsp://admin:pw@192.0.2.1/a\r\n\r\nrtsp://192.0.2.2/b \r\n")
+    assert camera_table.url_list(rows) == ["rtsp://admin:pw@192.0.2.1/a", "rtsp://192.0.2.2/b"]
+
+
+def test_pasted_excel_rows_need_the_column_dialog():
+    rows = camera_table.rows_from_text('Gate\t192.0.2.1\tadmin\n"Two\nlines"\t192.0.2.2\t\n')
+    assert rows == [["Gate", "192.0.2.1", "admin"], ["Two\nlines", "192.0.2.2", ""]]
+    assert camera_table.url_list(rows) is None
+    assert camera_table.url_list(camera_table.rows_from_text("Gate\nDoor")) is None
+    assert camera_table.url_list(camera_table.rows_from_text("")) is None
+
+
 def test_guess_mapping_in_both_languages():
     assert camera_table.guess_mapping(["地點", "攝影機名稱", "IP 位址", "Port", "帳號", "密碼"]) == {
         "site": 0, "name": 1, "host": 2, "port": 3, "user": 4, "password": 5}

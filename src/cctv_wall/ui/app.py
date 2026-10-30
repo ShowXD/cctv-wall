@@ -56,6 +56,7 @@ SITE_COMMANDS = {
     "ai_feeds": site_commands.edit_site_ai_feeds,
     "add_camera": site_commands.add_camera,
     "import_cameras": table_import.import_cameras,
+    "paste_cameras": table_import.paste_cameras,
     "export_cameras": table_import.export_cameras,
     "export_all_cameras": table_import.export_all_cameras,
 }
