@@ -20,6 +20,7 @@ src/cctv_wall/
   vlc_runtime.py  打包後把 python-vlc 指向包內的 libvlc
   gst_sync.py     GStreamer 後端：嚴格時間戳同步，或各格獨立播放；frame_lag() 讀畫面的 NTP 拍攝時間供 AI 結果對齊
   sync_probe.py   逐台攝影機探測 RTCP Sender Report 可用性
+  camera_table.py 攝影機清單 ↔ 試算表（.xlsx 用 openpyxl、.csv）：讀檔、猜欄位、逐列轉攝影機、合併到工作區（不碰 Qt）
   ai_feed.py      AI 結果 TCP 來源：NDJSON 解析、攝影機對照／略過規則／代碼文字、顯示延遲、斷線重連（不碰 Qt）
   build.py        版本化單一 EXE 發行包建置（build cctv-wall）
   ui/theme.py         全站 Qt 視覺主題，明／暗兩套與調色盤；apply_theme 向 Qt 指定深淺色（連標題列一起變）；painted_icon
@@ -37,6 +38,7 @@ src/cctv_wall/
   ui/ai_panel.py      AI 結果側欄：把 socket 執行緒的事件轉回 GUI、到顯示時刻才分派到畫格
   ui/ai_feed_editor.py AI 辨識連線對話框：連線與對齊、攝影機對照與單台篩選、畫格下方分行、訊息格式
                       （表單↔設定的轉換可單獨測試）
+  ui/table_import.py  匯入對話框（每欄指認欄位、預覽與錯誤列）與匯出；介面同 site_commands
   ui/startup.py       啟動進度畫面
   ui/app.py           Qt 主視窗：組裝上述元件、持有 Workspace 並負責記憶
   __main__.py     進入點：唯一知道真實實作的地方（--check / --dry-run）
@@ -50,6 +52,7 @@ tests/
   test_widgets.py      AI 對話框橫排的種類不被截斷（offscreen Qt）
   test_sync.py         GStreamer 管線元件與凍結環境的 PATH 行為
   test_build.py        發行名稱清理與建置流程
+  test_camera_table.py 試算表讀寫（UTF-8／Big5 CSV、xlsx）、猜欄位、逐列轉換與錯誤列、合併去重、匯出再匯回
   test_ai_feed.py      AI 結果解析、時間格式、延遲釋放、本機 loopback 連線與重連
 cctv_wall.spec    PyInstaller 打包設定
 ```

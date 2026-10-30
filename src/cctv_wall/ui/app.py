@@ -18,7 +18,7 @@ from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.player import PlaybackError, PlayerFactory
 from cctv_wall.resources import ProcessUsage, ResourceMonitor
-from cctv_wall.ui import site_commands
+from cctv_wall.ui import site_commands, table_import
 from cctv_wall.ui.ai_panel import AiEventPanel
 from cctv_wall.ui.control_bar import ControlBar
 from cctv_wall.ui.editor import open_editor
@@ -55,6 +55,9 @@ SITE_COMMANDS = {
     "delete": site_commands.delete_site,
     "ai_feeds": site_commands.edit_site_ai_feeds,
     "add_camera": site_commands.add_camera,
+    "import_cameras": table_import.import_cameras,
+    "export_cameras": table_import.export_cameras,
+    "export_all_cameras": table_import.export_all_cameras,
 }
 CAMERA_COMMANDS = {
     "edit_camera": site_commands.edit_camera_at,
