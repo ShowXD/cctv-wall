@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-10-22（攝影機清單 Excel／CSV 匯入匯出，分支 `feature/camera-import-export`，已 commit、未 push，issue #2）
+> 最後更新：2026-10-30（匯入匯出 #2 與 RTSP 畫面緩衝修正已合併 main 並推送）
 
 ---
 
@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 250 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 251 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **250 passed**（2026-10-22，`feature/camera-import-export`，`uv run --group dev pytest -q`） |
+| 測試 | **251 passed**（2026-10-30，`main`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -39,9 +39,22 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
-## 2026-10-22：攝影機清單 Excel／CSV 匯入與匯出（分支 `feature/camera-import-export`）
+## 2026-10-28：RTSP 大畫面被截斷（分支 `fix/rtsp-frame-buffer`，已合併 main）
 
-**狀態：已實作、已測試，已 commit 於分支（未 push、未合併 main）；尚未重新打包驗證 exe 內的 openpyxl。** Issue：#2（分支已以 Development 連結）。
+**狀態：已修正、已測試，2026-10-30 已合併 main 並推送、分支已刪除；尚未用現場攝影機確認。**
+- 現場 log：`MultiFramedRTPSource::doGetNextFrame1(): The total received frame size exceeds the client's buffer size (250000).
+  N bytes of trailing data will be dropped!`。VLC 的 live555 每張畫面預設只留 250 000 bytes，高解析度主碼流的關鍵影格
+  超過就丟掉後段，畫面下半部花掉到下一張關鍵影格。
+- 修正：`performance.media_options_for` 對 RTSP 加 `:rtsp-frame-buffer-size=2000000`（`RTSP_FRAME_BUFFER_BYTES`）。
+  已確認本機 libvlc 3.0.24（`C:\Tools\VLC`）的 live555 外掛有此選項。GStreamer 後端不受影響。
+- 檢查：分支上 pytest 239 passed（新增一項選項測試）、`--dry-run` 0；合併後的結果見開頭表格。
+- 下一步：使用者重新啟動後看 log 是否還有這行、畫面下半部是否正常。
+
+---
+
+## 2026-10-22：攝影機清單 Excel／CSV 匯入與匯出（分支 `feature/camera-import-export`，已合併 main）
+
+**狀態：已實作、已測試，2026-10-30 已合併 main 並推送、分支已刪除；尚未重新打包驗證 exe 內的 openpyxl。** Issue：#2（仍開啟，使用者決定暫不更動）。
 - 需求：現場拿到的連線資訊是 Excel／CSV、欄位每份不同；要能指認每欄是什麼後一次匯入，也要能匯出。
 - 使用者決定：Excel 用 **openpyxl**（新增相依 `openpyxl>=3.1.5`，帶入 `et-xmlfile`；只支援 `.xlsx`）；
   可指認地點欄（不存在就新增地點）；支援只有 IP／Port 的資料（選廠牌樣板組網址）；匯出前詢問是否含帳密（預設否）。
@@ -58,7 +71,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
   對話框上方「工作表」下拉（CSV 不顯示），換工作表重建預覽、重新猜欄位與標題列數；損毀或假 `.xlsx` 改回報讀檔錯誤
   （openpyxl 拋的 `InvalidFileException`／`BadZipFile` 原本不在攔截範圍，指令會直接中斷）。
   檢查：pytest 250 passed；offscreen 腳本確認切到第二張工作表後匯入 2 台、CSV 不顯示工作表選單。
-- 下一步：使用者同意後 push 分支；打包 exe 實測匯入一份現場 xlsx 與匯出；合併 main 需使用者要求。
+- 下一步：以 main-build 或重新打包的 exe 實測匯入一份現場 xlsx 與匯出（確認 openpyxl 已收進 exe）。
 
 ---
 

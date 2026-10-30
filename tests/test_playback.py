@@ -81,6 +81,12 @@ class TestPlaybackOptions:
     def test_non_rtsp_streams_are_not(self):
         assert ":rtsp-tcp" not in media_options_for(HLS_URL)
 
+    def test_rtsp_frame_buffer_holds_large_keyframes(self):
+        # live555's 250 000-byte default truncates high-resolution keyframes.
+        sizes = [int(option.split("=")[1]) for option in media_options_for(RTSP_URL)
+                 if option.startswith(":rtsp-frame-buffer-size=")]
+        assert sizes and sizes[0] > 250_000
+
 
 class TestBundledVlc:
     """vlc_runtime only does something inside a PyInstaller bundle."""
