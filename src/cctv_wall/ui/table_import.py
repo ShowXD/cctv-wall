@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -31,6 +32,7 @@ class ImportDialog(QDialog):
     def __init__(self, parent: QWidget, translator: Translator, workspace: Workspace,
                  path: str, sheets: Sequence[str], active_sheet: int, default_site: str) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
         self._translator = translator
         self._workspace = workspace
         self._path = path

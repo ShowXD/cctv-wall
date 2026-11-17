@@ -20,8 +20,8 @@ from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.camera_form import (CAMERA_FIELDS, FIELD_LABEL_KEYS, CameraForm, changed_fields,
                                       edit_camera)
-from cctv_wall.ui.flat_tree import FlatTree
 from cctv_wall.ui import table_import
+from cctv_wall.ui.flat_tree import FlatTree, fold_button
 from cctv_wall.ui.site_commands import edit_site_ai_feeds
 
 ROW_HEIGHT = 38
@@ -38,6 +38,7 @@ class WorkspaceEditor(QDialog):
                  on_change: Callable[[Workspace], None], translator: Translator,
                  initial_site_name: str | None = None) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
         self._translator = translator
         self._workspace = workspace     # the working copy
         self._applied = workspace       # what the rest of the app has
@@ -89,7 +90,11 @@ class WorkspaceEditor(QDialog):
             shortcut.activated.connect(action)
         sites_column = QVBoxLayout()
         sites_column.setSpacing(GROUP_SPACING)
-        sites_column.addWidget(QLabel(self._translator.t("site_list")))
+        heading = QHBoxLayout()
+        heading.addWidget(QLabel(self._translator.t("site_list")))
+        heading.addStretch(1)
+        heading.addWidget(fold_button(self._tree, self._translator.t("fold_tip"), self))
+        sites_column.addLayout(heading)
         sites_column.addWidget(self._tree, 1)
         hint = QLabel(self._translator.t("editor_hint"))
         hint.setObjectName("formHelp")

@@ -17,9 +17,23 @@ from collections.abc import Iterable
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
 from cctv_wall.i18n import Translator
-from cctv_wall.models import Camera, Workspace
+from cctv_wall.models import NAME_LIMIT, Camera, Site, Workspace
 from cctv_wall.ui.ai_feed_editor import edit_ai_feeds
 from cctv_wall.ui.camera_form import edit_camera
+
+
+def add_site(parent: QWidget, workspace: Workspace, translator: Translator,
+             site_name: str) -> Workspace | None:
+    """Ask for a name and add an empty site; it becomes the active site so cameras can follow."""
+    name, accepted = QInputDialog.getText(parent, translator.t("add_site"), translator.t("new_site_name"),
+                                          text=workspace.unique_site_name(translator.t("untitled_site")))
+    name = name.strip()[:NAME_LIMIT]
+    if not accepted or not name:
+        return None
+    if workspace.site(name) is not None:
+        QMessageBox.warning(parent, translator.t("add_site"), translator.t("site_exists", name=name))
+        return None
+    return workspace.with_sites((*workspace.sites, Site(name))).with_last_site(name)
 
 
 def duplicate_site(parent: QWidget, workspace: Workspace, translator: Translator,

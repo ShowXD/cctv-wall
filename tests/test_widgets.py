@@ -97,6 +97,20 @@ class TestSitePicking:
         QTest.keyClick(tree, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)   # already at the bottom
         assert navigation._selected_cameras() == (("A", 1), ("A", 2))
 
+    def test_folding_everything_leaves_the_wall_alone(self):
+        """Collapsing a site moves the current row from its hidden camera to the site; the list
+        must not report that as a pick, or the wall would jump to that site."""
+        navigation, tree, _picks = self._navigation()
+        tree.setCurrentItem(tree.topLevelItem(1).child(0))
+        changes = []
+        tree.currentItemChanged.connect(lambda *_items: changes.append(1))
+        QTest.keyClick(navigation, Qt.Key.Key_Left,
+                       Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+        assert not any(tree.topLevelItem(i).isExpanded() for i in range(tree.topLevelItemCount()))
+        assert changes == []
+        tree.toggle_fold()
+        assert all(tree.topLevelItem(i).isExpanded() for i in range(tree.topLevelItemCount()))
+
     def test_alt_arrows_move_the_current_site(self):
         navigation, tree, _picks = self._navigation()
         self._click(tree, tree.topLevelItem(1))

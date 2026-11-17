@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Callable, Mapping
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QVBoxLayout, QWidget)
 
@@ -100,6 +100,7 @@ class CameraDialog(QDialog):
     def __init__(self, parent: QWidget, translator: Translator, camera: Camera | None,
                  build: Callable[[Camera], Workspace]) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
         self._build = build
         self.result_workspace: Workspace | None = None
         self.setWindowTitle(translator.t("add_camera" if camera is None else "edit_camera_title"))

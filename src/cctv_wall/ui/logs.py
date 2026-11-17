@@ -1,7 +1,7 @@
 """Live in-app diagnostics: event records and RTSP timestamp capability checks."""
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
                                QTabWidget, QVBoxLayout, QWidget)
 
@@ -51,6 +51,7 @@ class _SyncProbeWorker(QThread):
 def show_log_dialog(parent: QWidget, translator: Translator, cameras: tuple[Camera, ...]) -> None:
     """Show current-session logs immediately, plus an on-demand read-only sync probe."""
     dialog = QDialog(parent)
+    dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
     dialog.setWindowTitle(translator.t("diagnostics"))
     dialog.resize(860, 540)
     layout = QVBoxLayout(dialog)
