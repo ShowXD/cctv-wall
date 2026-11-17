@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-11-17（剪貼簿貼上 #3 與位元率修正以 PR 合併 main）
+> 最後更新：2026-11-17（發布 v0.6.0）
 
 ---
 
@@ -36,6 +36,16 @@ uv run build cctv-wall         # 打包（一律 onefile）
 | `--check` | 開發環境回報 `strict sync : available` |
 
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
+
+---
+
+## 2026-11-17：發布 v0.6.0（issue #6，分支 `release/v0.6.0`）
+
+- `pyproject.toml` 版本 0.5.0 → 0.6.0（`uv lock` 只更新專案版本與 exclude-newer 時間戳，相依未變），BUILD.md 範例同步。
+  0.5.0 之後的內容：Excel／CSV 匯入匯出與選工作表（#2）、剪貼簿貼上（#3）、RTSP 畫面緩衝、位元率修正。
+- 以 PR 合併 main 後，在合併 commit 打帶註解 tag `v0.6.0`（沿用 v0.5.0 格式）→ Release EXE workflow 打包並建立正式 Release。
+- 檢查：pytest 255 passed、`--dry-run` 0。
+- 待辦：用 Release 的 exe 實測匯入匯出（#2 的打包驗證）。
 
 ---
 
