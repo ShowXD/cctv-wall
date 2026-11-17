@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.11"
 
 [options]
-exclude-newer = "2026-10-15T08:56:49.3985059Z"
+exclude-newer = "2026-11-10T01:49:10.0512196Z"
 exclude-newer-span = "P7D"
 
 [[package]]
@@ -17,7 +17,7 @@ wheels = [
 
 [[package]]
 name = "cctv-wall"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "openpyxl" },
