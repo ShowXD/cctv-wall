@@ -79,7 +79,8 @@ cctv_wall.spec    PyInstaller 打包設定
 省 CPU 的手段，依實際效果排序：
 
 1. **只播當前地點的當前頁** —— 40 路的 workspace 也永遠只有一頁的解碼器在跑。
-   切換地點或翻頁前會先 `release()` 所有播放器。
+   切換地點或翻頁前會先 `release()` 所有播放器。放大單台超過 `focus_saving_seconds` 後，其餘格
+   `Player.set_paused`（RTSP PAUSE，連線保持、解碼器保留）。關掉影像軌在 libvlc 3 會讓整個輸入結束，所以不採用。
 2. **網址指向子碼流（如 `/stream2`）** —— 從源頭少送像素，比任何本地優化都有效。
 3. **`--avcodec-hw=any`** —— 把 H.264/H.265 解碼丟給 GPU。
 4. **`:avcodec-skiploopfilter=nonref`** —— 只對非參考畫格關 deblocking，省下大量 CPU。
