@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-11-17（發布 v0.6.0）
+> 最後更新：2026-11-17（#10 設定視窗的匯入／匯出／貼上，分支 `feature/editor-import`）
 
 ---
 
@@ -38,6 +38,15 @@ uv run build cctv-wall         # 打包（一律 onefile）
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
 
 ---
+
+## 2026-11-17：#10 設定視窗的匯入／匯出／貼上（分支 `feature/editor-import`）
+
+**狀態：已實作、已驗證，已在分支 commit；未 push。** 同期 #8～#11 在各自分支，順序 #9 → #11 → #10 → #8。
+- `WorkspaceEditor._from_table` 直接呼叫 `table_import` 的四個指令（與主畫面同一份程式），回傳的工作區經 `_commit`
+  進工作副本，套用／確認才存檔、取消捨棄。地點右鍵：貼上／匯入／匯出；空白處：匯入、匯出全部；`Ctrl+V` 貼上。
+  預設地點＝第一個選取列所屬的地點。
+- 檢查：pytest 255 passed、`--dry-run` 0；offscreen 腳本：選 Plant 按 Ctrl+V 貼兩個網址 → 工作副本 Plant 多 2 台，
+  取消不回傳、套用回傳一次；選 Office 的攝影機匯入 CSV → 加到 Office。
 
 ## 2026-11-17：發布 v0.6.0（issue #6，分支 `release/v0.6.0`）
 
