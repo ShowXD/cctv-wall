@@ -12,7 +12,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")   # 不需要螢幕也能�
 from PySide6.QtWidgets import QApplication
 
 from cctv_wall.i18n import Translator
-from cctv_wall.player import PlaybackState, PlaybackStats
+from cctv_wall.models import Camera
+from cctv_wall.player import NullPlayerFactory, PlaybackState, PlaybackStats
 from cctv_wall.ui.view_mode import ViewMode
 from cctv_wall.ui.wall import (DEAD_STATES, MAX_RECONNECT_BACKOFF_TICKS, WallView, _AiLine, _Tile,
                                _due_for_retry, _release_detached, stats_text)
@@ -59,6 +60,44 @@ class TestReleaseDetached:
                      player=SimpleNamespace(release=lambda: released.append(True)))
         _release_detached([tile])
         assert released == [True] and tile.player is None
+
+
+class TestFocusSaving:
+    """放大單台一段時間後，其他畫面暫停（連線保持）；還原或改看別台時恢復。"""
+
+    def _wall(self) -> tuple[WallView, list[Camera]]:
+        _ = QApplication.instance() or QApplication([])
+        wall = WallView(NullPlayerFactory(), 4, Translator("en"), on_focus=lambda _camera: None,
+                        on_health_change=lambda: None, on_stream_change=lambda _camera, _stream: None)
+        cameras = [Camera(url=f"rtsp://192.0.2.{index}/s") for index in (1, 2, 3)]
+        wall.show_page(cameras)
+        while wall._pending_starts:
+            wall._start_next()
+        return wall, cameras
+
+    @staticmethod
+    def _paused(wall: WallView) -> list[bool]:
+        return [tile.player.paused for tile in wall._tiles]
+
+    def test_hidden_cameras_pause_after_the_delay_and_resume_on_restore(self):
+        wall, cameras = self._wall()
+        wall.focus_camera(cameras[1])
+        assert wall._saving_timer.isActive() and self._paused(wall) == [False, False, False]
+        wall._pause_hidden()                      # the delay ran out
+        assert self._paused(wall) == [True, False, True]
+        wall.focus_camera(cameras[0])             # watching another one resumes it at once
+        assert self._paused(wall) == [False, False, False]
+        wall._pause_hidden()
+        wall.restore_grid()
+        assert self._paused(wall) == [False, False, False] and not wall._saving_timer.isActive()
+        wall.stop()
+
+    def test_zero_never_pauses(self):
+        wall, cameras = self._wall()
+        wall.set_focus_saving(0)
+        wall.focus_camera(cameras[1])
+        assert not wall._saving_timer.isActive()
+        wall.stop()
 
 
 class TestDeadStates:

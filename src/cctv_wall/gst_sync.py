@@ -198,6 +198,9 @@ class GStreamerSyncPlayer:
     def show_overlay(self, text: str | None, corner: str = "bottom_right") -> None:
         pass
 
+    def set_paused(self, paused: bool) -> None:
+        pass   # strict sync runs every tile on one shared clock; pausing one would desync it
+
     def frame_lag(self) -> float | None:
         """None until the camera's first RTCP Sender Report, which is what maps its frames to
         NTP time. A few frames carry no stamp; the lag is steady, so the last one stands in."""

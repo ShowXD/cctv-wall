@@ -8,12 +8,14 @@ from typing import Callable, Sequence
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QAction, QContextMenuEvent, QMouseEvent
-from PySide6.QtWidgets import QFrame, QLabel, QMenu, QSizePolicy, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QFrame, QInputDialog, QLabel, QMenu, QSizePolicy, QSplitter,
+                               QVBoxLayout, QWidget)
 
 from cctv_wall import layout
 from cctv_wall.event_log import logger
 from cctv_wall.i18n import Translator
-from cctv_wall.models import MAX_STREAM, MIN_STREAM, Camera
+from cctv_wall.models import (DEFAULT_FOCUS_SAVING_SECONDS, MAX_FOCUS_SAVING_SECONDS, MAX_STREAM,
+                              MIN_STREAM, Camera)
 from cctv_wall.player import PlaybackError, PlaybackState, PlaybackStats, Player, PlayerFactory
 from cctv_wall.urls import build_url, redact, stream_from_direct_url
 
@@ -124,13 +126,15 @@ class VideoTile(QFrame):
     def __init__(self, camera: Camera, translator: Translator,
                  on_focus: Callable[[Camera], None],
                  on_stream_change: Callable[[Camera, int], None],
-                 on_retry: Callable[[Camera], None]) -> None:
+                 on_retry: Callable[[Camera], None],
+                 on_focus_saving_menu: Callable[[], None]) -> None:
         super().__init__()
         self.camera = camera
         self._translator = translator
         self._on_focus = on_focus
         self._on_stream_change = on_stream_change
         self._on_retry = on_retry
+        self._on_focus_saving_menu = on_focus_saving_menu
         self.setObjectName("videoTile")
         self.setMinimumSize(180, 120)
         self.surface = VideoSurface(lambda: self._on_focus(self.camera), self._show_stream_menu)
@@ -217,6 +221,9 @@ class VideoTile(QFrame):
             action.setEnabled(can_switch)
             action.triggered.connect(lambda _checked=False, value=stream: self._choose_stream(value))
             menu.addAction(action)
+        menu.addSeparator()
+        menu.addAction(self._translator.t("focus_saving_action")).triggered.connect(
+            self._on_focus_saving_menu)
         menu.exec(event.globalPos())
         menu.deleteLater()
 
@@ -302,9 +309,17 @@ class WallView(QWidget):
                  on_focus: Callable[[Camera], None], on_health_change: Callable[[], None],
                  on_stream_change: Callable[[Camera, int], None],
                  on_layout_changed: Callable[[str, tuple[float, ...], tuple[float, ...]], None]
-                 = lambda _shape, _rows, _columns: None) -> None:
+                 = lambda _shape, _rows, _columns: None,
+                 on_focus_saving_change: Callable[[int], None] = lambda _seconds: None) -> None:
         super().__init__()
         self._on_layout_changed = on_layout_changed
+        self._on_focus_saving_change = on_focus_saving_change
+        # Enlarged on one camera this long: the hidden ones pause (see Player.set_paused).
+        self._focus_saving_seconds = DEFAULT_FOCUS_SAVING_SECONDS
+        self._paused_tiles: list[_Tile] = []
+        self._saving_timer = QTimer(self)
+        self._saving_timer.setSingleShot(True)
+        self._saving_timer.timeout.connect(self._pause_hidden)
         # Saved row and column proportions per grid shape ("3x3"); a shape without one is even.
         self._layouts: dict[str, tuple[tuple[float, ...], tuple[float, ...]]] = {}
         self._shape = ""
@@ -404,7 +419,8 @@ class WallView(QWidget):
             self._lines.append(line)
             for camera in visible[row * columns:(row + 1) * columns]:
                 tile = _Tile(VideoTile(camera, self._translator, self._on_focus,
-                                       self._on_stream_change, self._retry_camera),
+                                       self._on_stream_change, self._retry_camera,
+                                       self._ask_focus_saving),
                              camera.label)
                 self._tiles.append(tile)
                 line.addWidget(tile.view)
@@ -427,22 +443,64 @@ class WallView(QWidget):
         target = next((tile for tile in self._tiles if tile.view.camera == camera), None)
         if target is None:
             return False
+        self._resume_paused()
         self._focused_tile = target
         for line in self._lines:
             line.setVisible(target.view.parent() is line)
             for index in range(line.count()):
                 line.widget(index).setVisible(line.widget(index) is target.view)
+        self._arm_focus_saving()
         return True
 
     def restore_grid(self) -> None:
-        """Return existing cards to their positions; players continue uninterrupted."""
+        """Return existing cards to their positions; paused players resume on the same session."""
         if self._focused_tile is None:
             return
+        self._saving_timer.stop()
+        self._resume_paused()
         self._focused_tile = None
         for line in self._lines:
             line.show()
             for index in range(line.count()):
                 line.widget(index).show()
+
+    def set_focus_saving(self, seconds: int) -> None:
+        """Seconds on one enlarged camera before the hidden ones pause; 0 never pauses them."""
+        self._focus_saving_seconds = seconds
+        if self._focused_tile is not None:
+            self._resume_paused()
+            self._arm_focus_saving()
+
+    def _arm_focus_saving(self) -> None:
+        self._saving_timer.stop()
+        if self._focus_saving_seconds > 0:
+            self._saving_timer.start(self._focus_saving_seconds * 1000)
+
+    def _pause_hidden(self) -> None:
+        if self._focused_tile is None:
+            return
+        self._paused_tiles = [tile for tile in self._tiles
+                              if tile is not self._focused_tile and tile.player is not None]
+        for tile in self._paused_tiles:
+            tile.player.set_paused(True)
+        if self._paused_tiles:
+            logger().info("pausing %d hidden camera(s) while one is enlarged", len(self._paused_tiles))
+
+    def _resume_paused(self) -> None:
+        """A tile the audit reconnected meanwhile already plays; resuming it changes nothing."""
+        for tile in self._paused_tiles:
+            if tile.player is not None and tile in self._tiles:
+                tile.player.set_paused(False)
+        self._paused_tiles = []
+
+    def _ask_focus_saving(self) -> None:
+        t = self._translator.t
+        seconds, accepted = QInputDialog.getInt(self.window(), t("focus_saving_title"),
+                                                t("focus_saving_prompt"), self._focus_saving_seconds,
+                                                0, MAX_FOCUS_SAVING_SECONDS, 10)
+        if accepted and seconds != self._focus_saving_seconds:
+            self.set_focus_saving(seconds)
+            self._on_focus_saving_change(seconds)
 
     def _align_columns(self, moved: _GridSplitter) -> None:
         """A column is one column all the way down: dragging its edge in one row moves it in all."""
@@ -527,6 +585,8 @@ class WallView(QWidget):
         self._pending_starts.clear()
         self._audit_timer.stop()
         self._playback_timer.stop()
+        self._saving_timer.stop()
+        self._paused_tiles = []   # their players are released below
         self._focused_tile = None
         # Native teardown can block on an unhealthy RTSP source; the surface has to
         # outlive it, so both are handed to a worker instead of stalling navigation.
