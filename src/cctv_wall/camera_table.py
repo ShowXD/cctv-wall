@@ -85,6 +85,21 @@ def read_rows(path: str | Path, sheet: str | None = None) -> list[list[str]]:
     return [[_cell(value) for value in row] for row in csv.reader(io.StringIO(text))]
 
 
+def rows_from_text(text: str) -> list[list[str]]:
+    """剪貼簿文字 → 資料列。Excel 複製的儲存格以 Tab 分隔，含換行的儲存格會加引號，所以用 csv 解析。"""
+    return [[_cell(value) for value in row]
+            for row in csv.reader(io.StringIO(text), delimiter="\t")]
+
+
+def url_list(rows: Sequence[Sequence[str]]) -> list[str] | None:
+    """每一個非空白列都只有一格、而且是網址時回傳這些網址；否則 None（需要指認欄位）。"""
+    cells = [[value for value in row if value] for row in rows]
+    cells = [row for row in cells if row]
+    if not cells or any(len(row) != 1 or "://" not in row[0] for row in cells):
+        return None
+    return [row[0] for row in cells]
+
+
 def guess_mapping(header: Sequence[str]) -> dict[str, int]:
     """依標題文字猜「欄位 → 第幾欄」，猜不到的欄位不放；只是初值，使用者會再確認。"""
     mapping: dict[str, int] = {}

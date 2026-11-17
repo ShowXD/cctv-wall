@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+                               QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from cctv_wall import camera_table, vendors
 from cctv_wall.event_log import logger
@@ -89,6 +89,11 @@ class ImportDialog(QDialog):
             QMessageBox.warning(self, self._translator.t("import_title"),
                                 self._translator.t("import_read_error", error=error))
             return False
+        self.show_rows(rows)
+        return True
+
+    def show_rows(self, rows: list[list[str]]) -> None:
+        """Preview these rows with freshly guessed fields; pasted rows come straight here."""
         self._rows = rows
         columns = max((len(row) for row in rows), default=0)
         guessed = camera_table.guess_mapping(rows[0]) if rows else {}
@@ -118,7 +123,6 @@ class ImportDialog(QDialog):
         self._header_rows.setValue(1 if guessed else 0)
         self._header_rows.blockSignals(False)
         self._refresh()
-        return True
 
     def _sheet_chosen(self, _index: int) -> None:
         self.load()
@@ -193,6 +197,42 @@ def import_cameras(parent: QWidget, workspace: Workspace, translator: Translator
     if not dialog.load() or dialog.exec() != QDialog.DialogCode.Accepted:
         return None
     return dialog.result_workspace
+
+
+def paste_cameras(parent: QWidget, workspace: Workspace, translator: Translator,
+                  site_name: str) -> Workspace | None:
+    """Cameras from the clipboard into `site_name`: a plain list of URLs is added after one
+    confirmation; anything with several columns (rows copied from Excel) opens the import dialog."""
+    if workspace.site(site_name) is None:
+        return None
+    rows = camera_table.rows_from_text(QApplication.clipboard().text())
+    urls = camera_table.url_list(rows)
+    if urls is None and not any(any(row) for row in rows):
+        QMessageBox.information(parent, translator.t("paste_title"), translator.t("paste_empty"))
+        return None
+    if urls is None:
+        dialog = ImportDialog(parent, translator, workspace, "", (), 0, site_name)
+        dialog.setModal(True)
+        dialog.show_rows(rows)
+        return dialog.result_workspace if dialog.exec() == QDialog.DialogCode.Accepted else None
+    cameras, errors = camera_table.cameras_from_rows([[url] for url in urls], {"url": 0},
+                                                     vendors.GENERIC_VENDOR, site_name)
+    answer = QMessageBox.question(parent, translator.t("paste_title"),
+                                  translator.t("paste_confirm", count=len(cameras), site=site_name,
+                                               errors=len(errors)))
+    if answer != QMessageBox.StandardButton.Yes or not cameras:
+        return None
+    try:
+        updated, added = camera_table.merge_into(workspace, cameras)
+    except ValueError as error:
+        logger().warning("camera paste refused: %s", error)
+        QMessageBox.warning(parent, translator.t("paste_title"), str(error))
+        return None
+    if added < len(cameras):
+        QMessageBox.information(parent, translator.t("paste_title"),
+                                translator.t("import_duplicates", added=added,
+                                             skipped=len(cameras) - added))
+    return updated if added else None
 
 
 def export_cameras(parent: QWidget, workspace: Workspace, translator: Translator,

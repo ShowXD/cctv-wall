@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-10-30（匯入匯出 #2 與 RTSP 畫面緩衝修正已合併 main 並推送）
+> 最後更新：2026-11-17（剪貼簿貼上 #3 與位元率修正以 PR 合併 main）
 
 ---
 
@@ -17,7 +17,7 @@
 
 ```bash
 uv sync                        # 開發環境
-uv run --group dev pytest -q   # 251 passed（不需要 VLC、不連網）
+uv run --group dev pytest -q   # 255 passed（不需要 VLC、不連網）
 uv run cctv-wall               # 啟動 GUI
 uv run cctv-wall --check       # 環境診斷（含 strict sync 探測）
 uv run cctv-wall --dry-run     # 用假後端建完整 GUI 後立刻結束
@@ -30,7 +30,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 | 項目 | 值 |
 | --- | --- |
-| 測試 | **251 passed**（2026-10-30，`main`，`uv run --group dev pytest -q`） |
+| 測試 | **255 passed**（2026-11-17，`main`，`uv run --group dev pytest -q`） |
 | exe | **231,630,302 bytes（220.9 MiB）** |
 | 最新建置 | `dist/releases/CCTVWall-0.2.0-20260806-171645/`，2026-08-06 17:19 |
 | `--check` | 開發環境回報 `strict sync : available` |
@@ -39,9 +39,22 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
-## 2026-10-30：攝影機狀態的位元率永遠是 0 kbps（分支 `fix/tile-bitrate`，從 `main` 開）
+## 2026-10-30：從剪貼簿貼上攝影機（分支 `feature/paste-cameras`，issue #3）
 
-**狀態：已修正、已驗證，尚未 commit。**
+**狀態：已實作、已驗證，2026-11-17 以 PR 合併 main，#3 隨 PR 關閉，分支已刪除。**
+- 需求：現場常直接複製多個網址，或從 Excel 複製整列，要不經檔案就加到選取的地點。使用者選「自動判斷」。
+- `camera_table.rows_from_text`（Tab 分隔、用 csv 解析，Excel 含換行的儲存格會加引號）、`url_list`
+  （每個非空白列只有一格且含 `://` 才算網址清單）。
+- `table_import.paste_cameras`：網址清單 → 一次確認後 `merge_into`（帳密拆出、去重）；多欄 → `ImportDialog.show_rows`
+  （從 `load()` 拆出）指認欄位；空的 → 提示。入口：側欄 `Ctrl+V`（選取列所屬地點）、地點右鍵。
+- 檢查：pytest 253 passed（新增 2 項）、`--dry-run` 0；offscreen 腳本操作主視窗：選 Plant 貼兩個網址 → Plant 多 2 台
+  且帳號拆出；貼 Excel 兩欄 → 對話框猜出名稱／IP、預設地點 Plant；空剪貼簿 → 提示。
+
+---
+
+## 2026-10-30：攝影機狀態的位元率永遠是 0 kbps（分支 `fix/tile-bitrate`）
+
+**狀態：已修正、已驗證，2026-11-17 以 PR #4 合併 main，分支已刪除。**
 - 原因：`VlcPlayer.stats()` 只看 `MediaStats.input_bitrate`。VLC 3 的 live555（RTSP）自己收網路資料、不經過 stream 層，
   `input_bitrate`／`read_bytes` 永遠是 0；`demux_bitrate`／`demux_read_bytes` 由 es_out 統計，所有來源都有。
 - 修正：`player.input_kbps(counters)`，input 為 0 時改用 demux（單位同為 bytes/ms）；本機檔案行為不變。

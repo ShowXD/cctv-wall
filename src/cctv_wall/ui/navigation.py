@@ -174,7 +174,7 @@ class SiteNavigation(QFrame):
         self._sites.customContextMenuRequested.connect(self._show_context_menu)
         # Bound methods, not lambdas holding self: see ai_feed_editor._CodePicker.
         for keys, action in (("Delete", self._delete_selected), ("Alt+Up", self._move_up),
-                             ("Alt+Down", self._move_down)):
+                             ("Alt+Down", self._move_down), ("Ctrl+V", self._paste)):
             shortcut = QShortcut(QKeySequence(keys), self._sites)
             shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(action)
@@ -275,6 +275,11 @@ class SiteNavigation(QFrame):
     def _edit_ai_feeds(self) -> None:
         self._on_site_action("ai_feeds", "")   # "" = the site on screen
 
+    def _paste(self) -> None:
+        """Ctrl+V: into the site of the selected row (a camera row counts as its site)."""
+        item = self._sites.currentItem()
+        self._on_site_action("paste_cameras", _reference(item)[0] if item else "")
+
     def _move_up(self) -> None:
         self._move_selected(-1)
 
@@ -367,6 +372,7 @@ class SiteNavigation(QFrame):
             self._add_action(menu, self._translator.t("duplicate_site"), "duplicate", site_name)
             self._add_action(menu, self._translator.t("rename"), "rename", site_name)
             self._add_action(menu, self._translator.t("ai_feeds_action"), "ai_feeds", site_name)
+            self._add_action(menu, self._translator.t("paste_cameras"), "paste_cameras", site_name)
             self._add_action(menu, self._translator.t("import_cameras"), "import_cameras", site_name)
             self._add_action(menu, self._translator.t("export_cameras"), "export_cameras", site_name)
             menu.addSeparator()
