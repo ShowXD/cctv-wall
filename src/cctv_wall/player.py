@@ -59,6 +59,13 @@ _VLC_STATE_NAMES: dict[str, PlaybackState] = {
 }
 
 
+def input_kbps(counters) -> int:
+    """libvlc's MediaStats bitrates are bytes per millisecond. live555 (RTSP) reads the network
+    itself and never passes through the stream layer, so its input counters stay at 0; the
+    demuxer counters see every source."""
+    return round((counters.input_bitrate or counters.demux_bitrate) * 8000)
+
+
 # libvlc marquee positions: 1 left, 2 right, 4 top, 8 bottom, added together.
 _MARQUEE_CORNERS = {"top_left": 5, "top_right": 6, "bottom_left": 9, "bottom_right": 10}
 
@@ -125,9 +132,8 @@ class VlcPlayer:
         if self._media is None or not self._media.get_stats(counters):
             return None
         width, height = self._video_size()
-        # input_bitrate is in bytes per millisecond.
         return PlaybackStats(width, height, counters.displayed_pictures, counters.lost_pictures,
-                             round(counters.input_bitrate * 8000))
+                             input_kbps(counters))
 
     def show_overlay(self, text: str | None, corner: str = "bottom_right") -> None:
         """libvlc's marquee draws inside the video, which a Qt widget cannot: the native video
