@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-11-17（發布 v0.6.0）
+> 最後更新：2026-11-17（#9 右鍵切換串流支援更多網址寫法，分支 `feature/stream-formats`）
 
 ---
 
@@ -38,6 +38,18 @@ uv run build cctv-wall         # 打包（一律 onefile）
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
 
 ---
+
+## 2026-11-17：進行中的 issue #8～#11（各自分支，從 v0.6.0 的 main 建立）
+
+順序（使用者同意）：#9 → #11 → #10 → #8。#8 需先用現場攝影機量測關閉解碼的效果。
+
+### #9 右鍵切換串流支援更多網址寫法（分支 `feature/stream-formats`）
+
+**狀態：已實作、已測試，已在分支 commit；未 push。**
+- `urls._STREAM_MARKERS`：依序比對海康 `Channels/<通道>0N`、大華 `subtype=0/1/2`、`streamType=main/sub`、`streamN`、`?stream=N`；
+  第 1 組（通道編號）原樣保留，只換串流值。新增 `stream_count(url)`；格式沒有的串流 `direct_url_with_stream` 回 None。
+  同一種標記一起換（`/stream1?stream=1` 維持一致）。右鍵選單只列該格式有的串流數。
+- 檢查：pytest 261 passed（新增大華／streamType／海康與超出範圍共 6 項）、`--dry-run` 0。未用現場攝影機實際切換。
 
 ## 2026-11-17：發布 v0.6.0（issue #6，分支 `release/v0.6.0`）
 
