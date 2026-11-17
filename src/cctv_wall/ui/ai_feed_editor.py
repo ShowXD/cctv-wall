@@ -233,6 +233,7 @@ class AiFeedsDialog(QDialog):
     def __init__(self, parent: QWidget, translator: Translator, site_name: str,
                  cameras: Sequence[Camera], feeds: Sequence[AiFeedConfig]) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
         self._translator = translator
         self._site_name = site_name
         self._cameras = tuple(cameras)
@@ -387,6 +388,7 @@ class AiFeedsDialog(QDialog):
                    if self._table.cellWidget(row, 2) is button)
         camera = self._table.cellWidget(row, 1).currentText() or self._table.item(row, 0).text()
         dialog = QDialog(self)
+        dialog.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
         dialog.setWindowTitle(self._translator.t("ai_filter_title", camera=camera))
         box = QVBoxLayout(dialog)
         picker = _CodePicker(self._translator, self._translator.t("ai_filter_all"),

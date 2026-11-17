@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-11-17（#9 右鍵切換串流支援更多網址寫法，分支 `feature/stream-formats`）
+> 最後更新：2026-11-17（#8～#11 依序以 PR 合併 main）
 
 ---
 
@@ -45,11 +45,22 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ### #9 右鍵切換串流支援更多網址寫法（分支 `feature/stream-formats`）
 
-**狀態：已實作、已測試，已在分支 commit；未 push。**
+**狀態：已實作、已測試，2026-11-17 以 PR #12 合併 main。**
 - `urls._STREAM_MARKERS`：依序比對海康 `Channels/<通道>0N`、大華 `subtype=0/1/2`、`streamType=main/sub`、`streamN`、`?stream=N`；
   第 1 組（通道編號）原樣保留，只換串流值。新增 `stream_count(url)`；格式沒有的串流 `direct_url_with_stream` 回 None。
   同一種標記一起換（`/stream1?stream=1` 維持一致）。右鍵選單只列該格式有的串流數。
 - 檢查：pytest 261 passed（新增大華／streamType／海康與超出範圍共 6 項）、`--dry-run` 0。未用現場攝影機實際切換。
+
+## 2026-11-17：#11 介面改善（分支 `feature/ui-improvements`）
+
+**狀態：已實作、已驗證，2026-11-17 以 PR 合併 main。**
+- 主畫面新增地點：`site_commands.add_site`（輸入名稱、重名警告、成為目前地點），側欄空白處與地點右鍵「新增地點…」。
+- 全部收合／展開：`FlatTree.fold_all／collapse_all／expand_all／toggle_fold`（擋住 signal：收合時目前列會從隱藏的
+  攝影機移到地點，側欄會當成點選地點而切換影像牆）；`flat_tree.fold_button` 建 `⇕` 按鈕並在所屬視窗註冊
+  `Ctrl+Shift+←／→`，側欄「地點」標題與設定視窗「地點列表」各一個。
+- 對話框最大化：設定視窗、AI 辨識連線與「只顯示」篩選、攝影機、匯入、事件紀錄加 `WindowMaximizeButtonHint`。
+- 檢查：pytest 256 passed（新增收合不觸發切換）、`--dry-run` 0；offscreen 主視窗：新增地點後存檔並切到新地點、
+  側欄與設定視窗有收合按鈕、四種對話框有最大化旗標。未在實機看按鈕外觀。
 
 ## 2026-11-17：發布 v0.6.0（issue #6，分支 `release/v0.6.0`）
 

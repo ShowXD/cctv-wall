@@ -46,7 +46,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "ai_advanced": "Message format (advanced, JSON)",
         "ai_advanced_help": "camera_key, time_key, skip, skip_empty, labels — see USAGE.md. A new connection copies the selected one's format.",
         "ai_feeds_invalid": "Invalid AI connection", "ai_ok": "OK",
-        "untitled_site": "New site",
+        "untitled_site": "New site", "add_site_action": "Add site…", "fold_tip": "Collapse or expand all sites (Ctrl+Shift+← collapses, Ctrl+Shift+→ expands)",
         "move_up": "Move up", "move_down": "Move down",
     },
     "zh_TW": {
@@ -90,7 +90,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
         "ai_advanced": "訊息格式（進階，JSON）",
         "ai_advanced_help": "camera_key、time_key、skip、skip_empty、labels，說明見 USAGE.md。新增連線時會沿用目前所選連線的格式。",
         "ai_feeds_invalid": "AI 連線設定有誤", "ai_ok": "確定",
-        "untitled_site": "新地點",
+        "untitled_site": "新地點", "add_site_action": "新增地點…", "fold_tip": "全部收合／展開地點（Ctrl+Shift+← 收合、Ctrl+Shift+→ 展開）",
         "move_up": "上移", "move_down": "下移",
     },
 }
