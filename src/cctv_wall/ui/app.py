@@ -189,9 +189,11 @@ class MainWindow(QMainWindow):
                               on_focus=self._toggle_camera_focus,
                               on_health_change=self._refresh_status,
                               on_stream_change=self._change_camera_stream,
-                              on_layout_changed=self._on_tile_layout_changed)
+                              on_layout_changed=self._on_tile_layout_changed,
+                              on_focus_saving_change=self._on_focus_saving_changed)
         self._wall.set_layouts({shape: (rows, columns)
                                 for shape, rows, columns in self._workspace.tile_layouts})
+        self._wall.set_focus_saving(self._workspace.focus_saving_seconds)
         self._wall.set_stats_corner(self._workspace.stats_corner)
         self._wall.set_stats_visible(self._workspace.stats_visible)
         layout_box.addWidget(self._wall, 1)
@@ -222,6 +224,10 @@ class MainWindow(QMainWindow):
                                 columns: tuple[float, ...]) -> None:
         """Saved as soon as a drag is released: a crash later must not lose the layout."""
         self._workspace = self._workspace.with_tile_layout(shape, rows, columns)
+        self._persist()
+
+    def _on_focus_saving_changed(self, seconds: int) -> None:
+        self._workspace = self._workspace.with_focus_saving(seconds)
         self._persist()
 
     def _reset_layout(self) -> None:

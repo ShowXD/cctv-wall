@@ -87,6 +87,10 @@ class Player(Protocol):
         """Seconds the picture on screen trails its capture time by the camera's own clock;
         None when the backend cannot tell."""
 
+    def set_paused(self, paused: bool) -> None:
+        """Stop or resume the stream while keeping the connection; backends that cannot do
+        that without disconnecting ignore it."""
+
     def release(self) -> None: ...
 
 
@@ -164,6 +168,12 @@ class VlcPlayer:
     def frame_lag(self) -> None:
         return None   # libvlc does not expose a frame's capture (RTCP/NTP) time
 
+    def set_paused(self, paused: bool) -> None:
+        """RTSP PAUSE: the camera stops sending, the session stays (a field camera stayed paused
+        5 minutes and resumed in 0.5 s). The decoder is kept, so memory is not freed. Turning
+        the video track off instead is no use: with audio off libvlc 3 ends the input."""
+        self._player.set_pause(1 if paused else 0)
+
     def release(self) -> None:
         """Tear down without blocking the Qt event loop on an unhealthy RTSP connection.
 
@@ -231,6 +241,7 @@ class NullPlayer:
         self.reported_state = state
         self.overlay: str | None = None
         self.lag: float | None = None
+        self.paused = False
 
     def play(self, url: str, window_id: int) -> None:
         self.calls.append((url, window_id))
@@ -247,6 +258,9 @@ class NullPlayer:
 
     def frame_lag(self) -> float | None:
         return self.lag
+
+    def set_paused(self, paused: bool) -> None:
+        self.paused = paused
 
     def release(self) -> None:
         self.released = True

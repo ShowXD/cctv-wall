@@ -43,6 +43,9 @@ MAX_AI_PANEL_WIDTH = 800
 # 每格狀態資訊畫在影像的哪個角落。
 STATS_CORNERS = ("top_left", "top_right", "bottom_left", "bottom_right")
 DEFAULT_STATS_CORNER = "bottom_right"
+# 放大單台後，其他畫面暫停 RTSP 串流（連線保持）前等待的秒數；0＝不暫停。
+DEFAULT_FOCUS_SAVING_SECONDS = 30
+MAX_FOCUS_SAVING_SECONDS = 3600
 # 一種格子形狀（"3x3"）拖曳後的列高與欄寬比例；沒存的形狀就平均分配。
 TileLayout = tuple[str, tuple[float, ...], tuple[float, ...]]
 
@@ -253,6 +256,7 @@ class Workspace:
     ai_panel_visible: bool = True
     stats_visible: bool = False
     stats_corner: str = DEFAULT_STATS_CORNER
+    focus_saving_seconds: int = DEFAULT_FOCUS_SAVING_SECONDS
     tile_layouts: tuple[TileLayout, ...] = ()
 
     def __post_init__(self) -> None:
@@ -316,6 +320,8 @@ class Workspace:
             ai_panel_visible=_flag(raw.get("ai_panel_visible", True)),
             stats_visible=_flag(raw.get("stats_visible", False)),
             stats_corner=corner if corner in STATS_CORNERS else DEFAULT_STATS_CORNER,
+            focus_saving_seconds=_bounded(raw.get("focus_saving_seconds"),
+                                          DEFAULT_FOCUS_SAVING_SECONDS, 0, MAX_FOCUS_SAVING_SECONDS),
             tile_layouts=_tile_layouts(raw.get("tile_layouts")),
         )
 
@@ -334,6 +340,7 @@ class Workspace:
             "ai_panel_visible": self.ai_panel_visible,
             "stats_visible": self.stats_visible,
             "stats_corner": self.stats_corner,
+            "focus_saving_seconds": self.focus_saving_seconds,
             "tile_layouts": {shape: {"rows": list(rows), "columns": list(columns)}
                              for shape, rows, columns in self.tile_layouts},
             "sites": [s.as_dict() for s in self.sites],
@@ -387,6 +394,10 @@ class Workspace:
         return replace(self, ai_panel_width=_bounded(width, DEFAULT_AI_PANEL_WIDTH,
                                                      MIN_AI_PANEL_WIDTH, MAX_AI_PANEL_WIDTH),
                        ai_panel_visible=visible)
+
+    def with_focus_saving(self, seconds: int) -> "Workspace":
+        return replace(self, focus_saving_seconds=_bounded(seconds, DEFAULT_FOCUS_SAVING_SECONDS,
+                                                           0, MAX_FOCUS_SAVING_SECONDS))
 
     def with_stats(self, visible: bool, corner: str) -> "Workspace":
         return replace(self, stats_visible=visible,

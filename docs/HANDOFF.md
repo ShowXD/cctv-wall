@@ -39,7 +39,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
-## 2026-11-17：進行中的 issue #8～#11（各自分支，從 v0.6.0 的 main 建立）
+## 2026-11-17：issue #8～#11（各自分支，從 v0.6.0 的 main 建立，已依序以 PR 合併）
 
 順序（使用者同意）：#9 → #11 → #10 → #8。#8 需先用現場攝影機量測關閉解碼的效果。
 
@@ -70,6 +70,21 @@ uv run build cctv-wall         # 打包（一律 onefile）
   預設地點＝第一個選取列所屬的地點。
 - 檢查：pytest 255 passed、`--dry-run` 0；offscreen 腳本：選 Plant 按 Ctrl+V 貼兩個網址 → 工作副本 Plant 多 2 台，
   取消不回傳、套用回傳一次；選 Office 的攝影機匯入 CSV → 加到 Office。
+
+## 2026-11-17：#8 放大單台後暫停其他畫面（分支 `feature/focus-power-saving`）
+
+**狀態：已實作、已驗證，2026-11-17 以 PR 合併 main。**
+- 實測決定做法（使用者選 C）：
+  - 關影像軌（`video_set_track(-1)`）：記憶體 452→160 MB，但 `--no-audio` 下 libvlc 3 把沒有任何軌視為結束，
+    輸入 `Ended`、連線中斷且無法恢復 → 不可用。
+  - RTSP 暫停（`set_pause`）：現場攝影機暫停 2 分鐘與 5 分鐘都維持 `Paused`，資料停止、CPU 3%→1%，
+    恢復 0.5～2 秒、不重連；**記憶體不減少**（解碼器保留）。37 台都是同一種網址格式，其他廠牌未測。
+- `Player.set_paused`（VLC＝RTSP PAUSE；GStreamer 不做以免嚴格同步失準）；`WallView` 放大後 `focus_saving_seconds`
+  （`Workspace`，預設 30、0＝不暫停、上限 3600）暫停其他格，還原／改看別台／換頁時恢復。暫停中被攝影機斷線的格
+  由既有稽核重連（`Paused` 對應 PLAYING，不會被誤判離線）。影像格右鍵「放大後暫停其他畫面…」設定並存檔。
+- 檢查：pytest 257 passed（新增 `TestFocusSaving` 2 項）、`--dry-run` 0；offscreen 主視窗：載入 45、右鍵改 90 後存檔。
+  未在實機 GUI 上放大觀察。
+- #8 issue 的標題與內文已依實測結果更新。
 
 ## 2026-11-17：發布 v0.6.0（issue #6，分支 `release/v0.6.0`）
 
