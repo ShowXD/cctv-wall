@@ -17,7 +17,7 @@ from cctv_wall.i18n import Translator
 from cctv_wall.models import (DEFAULT_FOCUS_SAVING_SECONDS, MAX_FOCUS_SAVING_SECONDS, MAX_STREAM,
                               MIN_STREAM, Camera)
 from cctv_wall.player import PlaybackError, PlaybackState, PlaybackStats, Player, PlayerFactory
-from cctv_wall.urls import build_url, redact, stream_from_direct_url
+from cctv_wall.urls import build_url, redact, stream_count, stream_from_direct_url
 
 FIRST_AUDIT_MS = 9000
 AUDIT_INTERVAL_MS = 5000
@@ -210,11 +210,11 @@ class VideoTile(QFrame):
     def _show_stream_menu(self, event: QContextMenuEvent) -> None:
         menu = QMenu(self.window())   # see SiteNavigation._show_context_menu
         menu.setTitle(self.camera.label)
-        # Only a URL that names its stream (".../stream2", "?stream=2") can be switched;
-        # guessing a vendor's URL format would break the camera instead.
+        # Only a URL that names its stream (".../stream2", "subtype=1", "streamType=sub",
+        # "Channels/102") can be switched; guessing a vendor's format would break the camera.
         current_stream = stream_from_direct_url(self.camera.url)
         can_switch = current_stream is not None
-        for stream in range(MIN_STREAM, MAX_STREAM + 1):
+        for stream in range(MIN_STREAM, (stream_count(self.camera.url) or MAX_STREAM) + 1):
             action = QAction(self._translator.t("stream_choice", stream=stream), menu)
             action.setCheckable(True)
             action.setChecked(stream == current_stream)

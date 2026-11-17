@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFrame, QHBoxLayout, QLabel, Q
 
 from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Workspace
-from cctv_wall.ui.flat_tree import FlatTree
+from cctv_wall.ui.flat_tree import FlatTree, fold_button
 
 # (site name, camera index) — the camera index is None on a site row.
 ItemReference = tuple[str, "int | None"]
@@ -161,13 +161,14 @@ class SiteNavigation(QFrame):
         label.setObjectName("navigationLabel")
         section.addWidget(label)
         section.addStretch(1)
+        self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item),
+                                self._pick, self._pick_range)
+        section.addWidget(fold_button(self._sites, self._translator.t("fold_tip"), self))
         self._count = QLabel("0")
         self._count.setObjectName("countBadge")
         self._count.setAlignment(Qt.AlignmentFlag.AlignCenter)
         section.addWidget(self._count)
         layout.addLayout(section)
-        self._sites = _SiteTree(self._apply_reorder, lambda item: self._item_changed(item, item),
-                                self._pick, self._pick_range)
         self._sites.setObjectName("siteList")
         self._sites.currentItemChanged.connect(self._item_changed)
         self._sites.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -376,6 +377,7 @@ class SiteNavigation(QFrame):
             self._add_action(menu, self._translator.t("import_cameras"), "import_cameras", site_name)
             self._add_action(menu, self._translator.t("export_cameras"), "export_cameras", site_name)
             menu.addSeparator()
+            self._add_action(menu, self._translator.t("add_site_action"), "add_site", site_name)
             self._add_action(menu, self._translator.t("delete_site_action"), "delete", site_name)
         else:
             for text, action in ((self._translator.t("edit_camera"), "edit_camera"),
@@ -387,9 +389,11 @@ class SiteNavigation(QFrame):
         menu.deleteLater()
 
     def _show_list_menu(self, position) -> None:
-        """Below the last row: import into the site on screen (or a new one), or export every site."""
+        """Below the last row: add a site, import into the site on screen (or a new one), or
+        export every site."""
         menu = QMenu(self.window())
         menu.setMinimumWidth(200)
+        self._add_action(menu, self._translator.t("add_site_action"), "add_site", "")
         self._add_action(menu, self._translator.t("import_cameras"), "import_cameras", "")
         self._add_action(menu, self._translator.t("export_all_cameras"), "export_all_cameras", "")
         menu.exec(self._sites.viewport().mapToGlobal(position))

@@ -9,7 +9,8 @@ from cctv_wall import vendors
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.app import wall_needs_reload
 from cctv_wall.ui.camera_form import changed_fields
-from cctv_wall.urls import MASK, build_url, direct_url_with_stream, redact, stream_from_direct_url
+from cctv_wall.urls import (MASK, build_url, direct_url_with_stream, redact, stream_count,
+                            stream_from_direct_url)
 
 
 RTSP = "rtsp://10.0.0.5:554/stream1"
@@ -204,6 +205,30 @@ class TestDirectStreamRewrite:
 
     def test_an_unrecognised_url_is_left_alone(self):
         assert direct_url_with_stream("rtsp://10.0.0.5:554/live", 2) is None
+
+    @pytest.mark.parametrize("url,current,count,switched", [
+        # Dahua: subtype 0/1/2 is stream 1/2/3; channel= never changes.
+        ("rtsp://10.0.0.5:554/cam/realmonitor?channel=12&subtype=0", 1, 3,
+         "rtsp://10.0.0.5:554/cam/realmonitor?channel=12&subtype=1"),
+        # NVRs: streamType / streamtype main|sub, with chID kept as typed.
+        ("rtsp://10.0.0.5:554/chID=01&streamType=main", 1, 2,
+         "rtsp://10.0.0.5:554/chID=01&streamType=sub"),
+        ("rtsp://10.0.0.5:554/chID=1&streamtype=main&linkType=tcp", 1, 2,
+         "rtsp://10.0.0.5:554/chID=1&streamtype=sub&linkType=tcp"),
+        # Hikvision: channel 12, stream 01 -> 02.
+        ("rtsp://10.0.0.5:554/Streaming/Channels/1201", 1, 4,
+         "rtsp://10.0.0.5:554/Streaming/Channels/1202"),
+        ("rtsp://10.0.0.5:554/Streaming/Channels/102?transportmode=unicast", 2, 4,
+         "rtsp://10.0.0.5:554/Streaming/Channels/102?transportmode=unicast"),
+    ])
+    def test_vendor_markers_switch_only_the_stream(self, url, current, count, switched):
+        assert stream_from_direct_url(url) == current
+        assert stream_count(url) == count
+        assert direct_url_with_stream(url, 2) == switched
+
+    def test_a_stream_the_format_lacks_is_refused(self):
+        assert direct_url_with_stream("rtsp://10.0.0.5:554/chID=1&streamType=main", 3) is None
+        assert stream_count("rtsp://10.0.0.5:554/live") == 0
 
 
 class TestRedaction:

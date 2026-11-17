@@ -20,7 +20,8 @@ from cctv_wall.i18n import Translator
 from cctv_wall.models import Camera, Site, Workspace
 from cctv_wall.ui.camera_form import (CAMERA_FIELDS, FIELD_LABEL_KEYS, CameraForm, changed_fields,
                                       edit_camera)
-from cctv_wall.ui.flat_tree import FlatTree
+from cctv_wall.ui import table_import
+from cctv_wall.ui.flat_tree import FlatTree, fold_button
 from cctv_wall.ui.site_commands import edit_site_ai_feeds
 
 ROW_HEIGHT = 38
@@ -37,6 +38,7 @@ class WorkspaceEditor(QDialog):
                  on_change: Callable[[Workspace], None], translator: Translator,
                  initial_site_name: str | None = None) -> None:
         super().__init__(parent)
+        self.setWindowFlag(Qt.WindowType.WindowMaximizeButtonHint)
         self._translator = translator
         self._workspace = workspace     # the working copy
         self._applied = workspace       # what the rest of the app has
@@ -82,13 +84,17 @@ class WorkspaceEditor(QDialog):
         for keys, action in ((QKeySequence.StandardKey.Delete, self._delete_selected),
                              ("Alt+Up", lambda: self._move_selected(-1)),
                              ("Alt+Down", lambda: self._move_selected(1)),
-                             ("Ctrl+N", self._new_camera)):
+                             ("Ctrl+N", self._new_camera), ("Ctrl+V", self._paste_cameras)):
             shortcut = QShortcut(QKeySequence(keys), self._tree)
             shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
             shortcut.activated.connect(action)
         sites_column = QVBoxLayout()
         sites_column.setSpacing(GROUP_SPACING)
-        sites_column.addWidget(QLabel(self._translator.t("site_list")))
+        heading = QHBoxLayout()
+        heading.addWidget(QLabel(self._translator.t("site_list")))
+        heading.addStretch(1)
+        heading.addWidget(fold_button(self._tree, self._translator.t("fold_tip"), self))
+        sites_column.addLayout(heading)
         sites_column.addWidget(self._tree, 1)
         hint = QLabel(self._translator.t("editor_hint"))
         hint.setObjectName("formHelp")
@@ -293,13 +299,46 @@ class WorkspaceEditor(QDialog):
                 menu.addAction(t("add_camera"), self._new_camera)
                 menu.addAction(t("rename_site"), lambda: self._tree.editItem(item, 0))
                 menu.addAction(t("ai_feeds_action"), self._edit_ai_feeds)
+                menu.addAction(t("paste_cameras"), self._paste_cameras)
+                menu.addAction(t("import_cameras"), self._import_cameras)
+                menu.addAction(t("export_cameras"), self._export_cameras)
             for label, offset in ((t("move_up"), -1), (t("move_down"), 1)):
                 action = menu.addAction(label, lambda step=offset: self._move_selected(step))
                 action.setEnabled(self._can_move(offset))
             menu.addAction(t("delete"), self._delete_selected)
             menu.addSeparator()
         menu.addAction(t("add_site"), self._add_site)
+        if item is None:
+            menu.addAction(t("import_cameras"), self._import_cameras)
+            menu.addAction(t("export_all_cameras"), self._export_all_cameras)
         menu.exec(self._tree.viewport().mapToGlobal(position))
+
+    # ---- import, export and paste: the main window's commands, landing in the working copy --
+
+    def _selected_site_name(self) -> str:
+        """The site of the first selected row (a camera row counts as its site), or ""."""
+        selected = self._selected()
+        return self._workspace.sites[selected[0][0]].name if selected else ""
+
+    def _from_table(self, command: Callable[..., Workspace | None]) -> None:
+        site_name = self._selected_site_name()
+        self._stash_form()
+        updated = command(self, self._workspace, self._translator, site_name)
+        if updated is not None:
+            # Nothing is saved here: like every other change, it waits for Apply or OK.
+            self._commit(lambda: updated)
+
+    def _paste_cameras(self) -> None:
+        self._from_table(table_import.paste_cameras)
+
+    def _import_cameras(self) -> None:
+        self._from_table(table_import.import_cameras)
+
+    def _export_cameras(self) -> None:
+        self._from_table(table_import.export_cameras)
+
+    def _export_all_cameras(self) -> None:
+        self._from_table(table_import.export_all_cameras)
 
     # ---- changes to the working copy ------------------------------------------------------
 

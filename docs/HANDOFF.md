@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-11-17（#8 放大單台後暫停其他畫面，分支 `feature/focus-power-saving`）
+> 最後更新：2026-11-17（#8～#11 依序以 PR 合併 main）
 
 ---
 
@@ -39,9 +39,41 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-11-17：issue #8～#11（各自分支，從 v0.6.0 的 main 建立，已依序以 PR 合併）
+
+順序（使用者同意）：#9 → #11 → #10 → #8。#8 需先用現場攝影機量測關閉解碼的效果。
+
+### #9 右鍵切換串流支援更多網址寫法（分支 `feature/stream-formats`）
+
+**狀態：已實作、已測試，2026-11-17 以 PR #12 合併 main。**
+- `urls._STREAM_MARKERS`：依序比對海康 `Channels/<通道>0N`、大華 `subtype=0/1/2`、`streamType=main/sub`、`streamN`、`?stream=N`；
+  第 1 組（通道編號）原樣保留，只換串流值。新增 `stream_count(url)`；格式沒有的串流 `direct_url_with_stream` 回 None。
+  同一種標記一起換（`/stream1?stream=1` 維持一致）。右鍵選單只列該格式有的串流數。
+- 檢查：pytest 261 passed（新增大華／streamType／海康與超出範圍共 6 項）、`--dry-run` 0。未用現場攝影機實際切換。
+
+## 2026-11-17：#11 介面改善（分支 `feature/ui-improvements`）
+
+**狀態：已實作、已驗證，2026-11-17 以 PR 合併 main。**
+- 主畫面新增地點：`site_commands.add_site`（輸入名稱、重名警告、成為目前地點），側欄空白處與地點右鍵「新增地點…」。
+- 全部收合／展開：`FlatTree.fold_all／collapse_all／expand_all／toggle_fold`（擋住 signal：收合時目前列會從隱藏的
+  攝影機移到地點，側欄會當成點選地點而切換影像牆）；`flat_tree.fold_button` 建 `⇕` 按鈕並在所屬視窗註冊
+  `Ctrl+Shift+←／→`，側欄「地點」標題與設定視窗「地點列表」各一個。
+- 對話框最大化：設定視窗、AI 辨識連線與「只顯示」篩選、攝影機、匯入、事件紀錄加 `WindowMaximizeButtonHint`。
+- 檢查：pytest 256 passed（新增收合不觸發切換）、`--dry-run` 0；offscreen 主視窗：新增地點後存檔並切到新地點、
+  側欄與設定視窗有收合按鈕、四種對話框有最大化旗標。未在實機看按鈕外觀。
+
+## 2026-11-17：#10 設定視窗的匯入／匯出／貼上（分支 `feature/editor-import`）
+
+**狀態：已實作、已驗證，2026-11-17 以 PR 合併 main。**
+- `WorkspaceEditor._from_table` 直接呼叫 `table_import` 的四個指令（與主畫面同一份程式），回傳的工作區經 `_commit`
+  進工作副本，套用／確認才存檔、取消捨棄。地點右鍵：貼上／匯入／匯出；空白處：匯入、匯出全部；`Ctrl+V` 貼上。
+  預設地點＝第一個選取列所屬的地點。
+- 檢查：pytest 255 passed、`--dry-run` 0；offscreen 腳本：選 Plant 按 Ctrl+V 貼兩個網址 → 工作副本 Plant 多 2 台，
+  取消不回傳、套用回傳一次；選 Office 的攝影機匯入 CSV → 加到 Office。
+
 ## 2026-11-17：#8 放大單台後暫停其他畫面（分支 `feature/focus-power-saving`）
 
-**狀態：已實作、已驗證，已在分支 commit；未 push。** 同期 #9～#11 在各自分支，順序 #9 → #11 → #10 → #8。
+**狀態：已實作、已驗證，2026-11-17 以 PR 合併 main。**
 - 實測決定做法（使用者選 C）：
   - 關影像軌（`video_set_track(-1)`）：記憶體 452→160 MB，但 `--no-audio` 下 libvlc 3 把沒有任何軌視為結束，
     輸入 `Ended`、連線中斷且無法恢復 → 不可用。
@@ -52,7 +84,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
   由既有稽核重連（`Paused` 對應 PLAYING，不會被誤判離線）。影像格右鍵「放大後暫停其他畫面…」設定並存檔。
 - 檢查：pytest 257 passed（新增 `TestFocusSaving` 2 項）、`--dry-run` 0；offscreen 主視窗：載入 45、右鍵改 90 後存檔。
   未在實機 GUI 上放大觀察。
-- #8 issue 內文原寫「關掉解碼」與「不採用 RTSP 暫停」，與此決定相反，待使用者同意後更新。
+- #8 issue 的標題與內文已依實測結果更新。
 
 ## 2026-11-17：發布 v0.6.0（issue #6，分支 `release/v0.6.0`）
 
