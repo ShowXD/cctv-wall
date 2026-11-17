@@ -50,6 +50,7 @@ def wall_needs_reload(before: Workspace, after: Workspace, site_on_screen: str) 
 
 # Navigation action -> the command that carries it out. Adding one means adding a row.
 SITE_COMMANDS = {
+    "add_site": site_commands.add_site,
     "duplicate": site_commands.duplicate_site,
     "rename": site_commands.rename_site,
     "delete": site_commands.delete_site,
