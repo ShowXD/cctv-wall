@@ -39,6 +39,18 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ---
 
+## 2026-10-30：攝影機狀態的位元率永遠是 0 kbps（分支 `fix/tile-bitrate`，從 `main` 開）
+
+**狀態：已修正、已驗證，尚未 commit。**
+- 原因：`VlcPlayer.stats()` 只看 `MediaStats.input_bitrate`。VLC 3 的 live555（RTSP）自己收網路資料、不經過 stream 層，
+  `input_bitrate`／`read_bytes` 永遠是 0；`demux_bitrate`／`demux_read_bytes` 由 es_out 統計，所有來源都有。
+- 修正：`player.input_kbps(counters)`，input 為 0 時改用 demux（單位同為 bytes/ms）；本機檔案行為不變。
+- 檢查：pytest 253 passed（新增 `TestBitrate` 2 項）、`--dry-run` 0；以 `--vout=dummy` 播一台現場 1080p 攝影機，
+  修正前 input 0、修正後 530～558 kbps（與 demux_read_bytes 兩次取樣相減一致）。
+- 同次確認：9 路 1080p 主碼流記憶體約 1947 MB（每路約 195 MB）屬正常，不需修改；多格時改用子碼流最有效。
+
+---
+
 ## 2026-10-28：RTSP 大畫面被截斷（分支 `fix/rtsp-frame-buffer`，已合併 main）
 
 **狀態：已修正、已測試，2026-10-30 已合併 main 並推送、分支已刪除；尚未用現場攝影機確認。**
@@ -54,7 +66,7 @@ uv run build cctv-wall         # 打包（一律 onefile）
 
 ## 2026-10-22：攝影機清單 Excel／CSV 匯入與匯出（分支 `feature/camera-import-export`，已合併 main）
 
-**狀態：已實作、已測試，2026-10-30 已合併 main 並推送、分支已刪除；尚未重新打包驗證 exe 內的 openpyxl。** Issue：#2（仍開啟，使用者決定暫不更動）。
+**狀態：已實作、已測試，2026-10-30 已合併 main 並推送、分支已刪除；尚未重新打包驗證 exe 內的 openpyxl。** Issue：#2（2026-10-30 已關閉；打包與現場實測兩項未勾）。
 - 需求：現場拿到的連線資訊是 Excel／CSV、欄位每份不同；要能指認每欄是什麼後一次匯入，也要能匯出。
 - 使用者決定：Excel 用 **openpyxl**（新增相依 `openpyxl>=3.1.5`，帶入 `et-xmlfile`；只支援 `.xlsx`）；
   可指認地點欄（不存在就新增地點）；支援只有 IP／Port 的資料（選廠牌樣板組網址）；匯出前詢問是否含帳密（預設否）。

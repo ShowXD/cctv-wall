@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 
 import pytest
 
 from cctv_wall import layout, vlc_runtime
 from cctv_wall.performance import media_options_for
+from cctv_wall.player import input_kbps
 
 RTSP_URL = "rtsp://10.0.0.5:554/stream1"
 HLS_URL = "https://example.test/live.m3u8"
@@ -86,6 +88,15 @@ class TestPlaybackOptions:
         sizes = [int(option.split("=")[1]) for option in media_options_for(RTSP_URL)
                  if option.startswith(":rtsp-frame-buffer-size=")]
         assert sizes and sizes[0] > 250_000
+
+
+class TestBitrate:
+    def test_rtsp_falls_back_to_the_demuxer_counter(self):
+        # Measured on a live camera: input_bitrate stays 0, demux_bitrate ~0.0667 bytes/ms.
+        assert input_kbps(SimpleNamespace(input_bitrate=0.0, demux_bitrate=0.0667)) == 534
+
+    def test_input_counter_wins_when_libvlc_reports_it(self):
+        assert input_kbps(SimpleNamespace(input_bitrate=0.25, demux_bitrate=0.2)) == 2000
 
 
 class TestBundledVlc:
