@@ -4,7 +4,7 @@
 > 功能說明、操作方式、打包指令請看 [`../README.md`](../README.md) 與 `docs/` 底下的
 > [USAGE](USAGE.md) / [BUILD](BUILD.md) / [ARCHITECTURE](ARCHITECTURE.md) /
 > [TROUBLESHOOTING](TROUBLESHOOTING.md)。
-> 最後更新：2026-11-17（#8～#11 依序以 PR 合併 main）
+> 最後更新：2026-11-17（發布 v0.7.0）
 
 ---
 
@@ -36,6 +36,16 @@ uv run build cctv-wall         # 打包（一律 onefile）
 | `--check` | 開發環境回報 `strict sync : available` |
 
 **exe 比先前記錄的 186 MB 大了約 36 MB，這是刻意的**——見陷阱 3。
+
+---
+
+## 2026-11-17：發布 v0.7.0（issue #16，分支 `release/v0.7.0`）
+
+- `pyproject.toml` 版本 0.6.0 → 0.7.0（`uv lock` 只更新專案版本與 exclude-newer 時間戳，相依未變），BUILD.md 範例同步。
+  0.6.0 之後的內容：#8 放大後暫停其他畫面、#9 更多串流網址寫法、#10 設定視窗匯入／匯出／貼上、#11 介面改善。
+- 以 PR 合併 main 後，在合併 commit 打帶註解 tag `v0.7.0` → Release EXE workflow 打包並建立正式 Release。
+- 檢查：pytest 264 passed、`--dry-run` 0。
+- 實測補充：16 台中 15 台暫停時，CPU 單核 108%→約 20%、其他 15 台接收量 2.3 MB/s→0，記憶體不變（預期）。
 
 ---
 
